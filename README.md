@@ -110,6 +110,26 @@ This removes the PostgreSQL named volume and all local development data, then st
 
 Local MinIO is not added in this phase. The current milestones have no runnable consumer of the S3-compatible storage interface, so adding it would introduce unused infrastructure. S3-compatible storage remains the architectural choice for artifacts and large files; an optional Compose profile can be added when that interface has an implementation to exercise.
 
+## Native harness
+
+The Python harness in `harness/kairo_harness` is independent of the control plane. Its ReAct loop, provider interface, tools boundary, and structured event emitter are usable directly from Python. Automated tests use the built-in mock provider and require neither Ollama nor network access:
+
+```sh
+pnpm run test:python
+```
+
+To exercise a real local model manually, set an Ollama endpoint that is reachable from the process running the harness and run the smoke script:
+
+```sh
+KAIRO_OLLAMA_BASE_URL=http://127.0.0.1:11434 \
+KAIRO_OLLAMA_MODEL=gemma3:270m \
+uv run --project harness/kairo_harness python harness/kairo_harness/scripts/ollama_smoke.py
+```
+
+`localhost` is only correct when the harness itself runs on the machine hosting Ollama. In a container or distributed deployment, configure a reachable host or gateway endpoint.
+
+Model tool decisions must be native provider tool calls or the strictly validated JSON action format `{"type":"tool_call","tool_calls":[...]}`. Plain text is treated only as a final answer and is never executed. Emitted events use the shared versioned envelopes, redact sensitive fields, and do not include hidden reasoning or raw prompts.
+
 ## Verification
 
 ```sh
