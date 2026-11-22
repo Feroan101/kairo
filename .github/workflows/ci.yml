@@ -47,8 +47,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Enable Corepack
-        run: corepack enable
+      - name: Enable Corepack and activate pnpm 12.21.0
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.21.0 --activate
+          pnpm --version
 
       - name: Set up Python
         uses: actions/setup-python@v7
