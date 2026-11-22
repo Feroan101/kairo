@@ -53,10 +53,11 @@ Static types are inferred from the JSON schemas with `json-schema-to-ts`. Becaus
 The harness uses `jsonschema` to validate against the same schema files and Pydantic v2 models for typed internal access:
 
 ```python
-from kairo_harness.contracts import to_message_envelope, validate_event_envelope
+from kairo_harness.contracts import to_event_envelope, to_message_envelope, validate_envelope
 
 message = to_message_envelope(value)
-result = validate_event_envelope(value)
+event = to_event_envelope(value)
+validated = validate_envelope("event-envelope", value)
 ```
 
 Validation failures raise `ContractValidationError` with a tuple of `ValidationIssue` values. Pydantic models provide typed views after JSON Schema validation; validation rules are not duplicated in Pydantic.

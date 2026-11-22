@@ -110,6 +110,30 @@ This removes the PostgreSQL named volume and all local development data, then st
 
 Local MinIO is not added in this phase. The current milestones have no runnable consumer of the S3-compatible storage interface, so adding it would introduce unused infrastructure. S3-compatible storage remains the architectural choice for artifacts and large files; an optional Compose profile can be added when that interface has an implementation to exercise.
 
+## Native harness
+
+The Python harness in `harness/kairo_harness` is independent of the control plane. Its ReAct loop, provider interface, tools boundary, and structured event emitter are usable directly from Python. Automated tests use the built-in mock provider and require neither Ollama nor network access:
+
+```sh
+pnpm run test:python
+```
+
+To exercise a real local model manually, set an Ollama endpoint that is reachable from the process running the harness and run the smoke script:
+
+```sh
+KAIRO_OLLAMA_BASE_URL=http://127.0.0.1:11434 \
+KAIRO_OLLAMA_MODEL=gemma3:270m \
+uv run --project harness/kairo_harness python harness/kairo_harness/scripts/ollama_smoke.py
+```
+
+`localhost` is only correct when the harness itself runs on the machine hosting Ollama. In a container or distributed deployment, configure a reachable host or gateway endpoint.
+
+Model tool decisions must be native provider tool calls or the strictly validated JSON action format `{"type":"tool_call","tool_calls":[...]}`. Plain text is treated only as a final answer and is never executed.
+
+Model streaming is opt-in through `ModelConfig.stream_responses`, which defaults to `false`. The non-streaming execution path is unchanged. When streaming is enabled, the runner aggregates content, tool-call fragments, cumulative usage, and finish reasons before the normal decision-parsing and tool-execution pipeline. Stream events contain only operational metadata; raw model output and private reasoning are never emitted.
+
+Tools are registered through `ToolRegistry` with unique names, JSON Schema definitions, handlers, and required permissions. A runner receives an immutable registry snapshot and an immutable set of execution permissions; later registry changes or handler output cannot grant access to additional tools. Authorization and schema validation happen before handler invocation, and handler errors, invalid results, and timeouts become structured `ToolResult` errors that the ReAct loop observes. Emitted events use the shared versioned envelopes, redact sensitive fields, and do not include hidden reasoning or raw prompts.
+
 ## Verification
 
 ```sh
