@@ -3,20 +3,27 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import suppress
 from time import perf_counter
+from typing import Any
 
 from kairo_harness.config import ExecutionConfig
 from kairo_harness.context import ExecutionContext
 from kairo_harness.domain import (
     FinalDecision,
+    FinishReason,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     ModelRole,
+    ModelStreamChunk,
     ToolCallDecision,
     ToolCallRequest,
     ToolErrorInfo,
     ToolResult,
     Usage,
+    aggregate_stream_chunks,
     parse_model_decision,
 )
 from kairo_harness.errors import (
@@ -198,42 +205,54 @@ class ExecutionRunner:
             },
         )
 
-        try:
-            response = await asyncio.wait_for(
-                self.provider.complete(request), timeout=self.config.model.timeout_seconds
-            )
-        except TimeoutError as error:
-            raise ExecutionTimeoutError(
-                "Model request timed out",
-                code="model.timeout",
-                details={"requestId": request_id, "model": self.config.model.model},
-            ) from error
-        except ProviderError:
-            raise
-        except Exception as error:
-            raise ProviderError(
-                "Model provider raised an unexpected error",
-                code="provider.unexpected",
-                retryable=False,
-                details={"requestId": request_id, "errorType": type(error).__name__},
-            ) from error
+        stream_metadata: dict[str, Any] = {}
+        if self.config.model.stream_responses:
+            chunks, stream_metadata = await self._stream_chunks(request, request_event_id)
+            try:
+                response = aggregate_stream_chunks(chunks)
+            except InvalidModelResponseError as error:
+                self.state.model_requests += 1
+                await self._emit_invalid_response(
+                    request_id,
+                    FinishReason.INCOMPLETE,
+                    error,
+                    request_event_id,
+                    stream_metadata,
+                )
+                raise
+        else:
+            response = await self._complete_response(request)
 
         self.state.model_requests += 1
         self._add_usage(response.usage)
 
+        if response.finish_reason == FinishReason.INCOMPLETE:
+            error = InvalidModelResponseError(
+                "Model stream ended before completion",
+                code="model.incomplete_stream",
+                details={
+                    "requestId": request_id,
+                    "chunkCount": stream_metadata.get("chunkCount", 0),
+                },
+            )
+            await self._emit_invalid_response(
+                request_id,
+                response.finish_reason,
+                error,
+                request_event_id,
+                stream_metadata,
+            )
+            raise error
+
         try:
             decision = parse_model_decision(response)
         except InvalidModelResponseError as error:
-            await self.emitter.emit(
-                EventType.MODEL_RESPONDED,
-                {
-                    "requestId": request_id,
-                    "executionId": str(self.config.execution_id),
-                    "decisionType": "invalid",
-                    "finishReason": response.finish_reason.value,
-                    "errorCode": error.code,
-                },
-                causation_id=request_event_id,
+            await self._emit_invalid_response(
+                request_id,
+                response.finish_reason,
+                error,
+                request_event_id,
+                stream_metadata,
             )
             raise
 
@@ -247,10 +266,130 @@ class ExecutionRunner:
                 "finishReason": response.finish_reason.value,
                 "toolNames": [call.name for call in response.tool_calls],
                 "usage": response.usage.model_dump(mode="json", exclude_none=True),
+                **stream_metadata,
             },
             causation_id=request_event_id,
         )
         return decision
+
+    async def _complete_response(self, request: ModelRequest) -> ModelResponse:
+        try:
+            return await asyncio.wait_for(
+                self.provider.complete(request), timeout=self.config.model.timeout_seconds
+            )
+        except TimeoutError as error:
+            raise ExecutionTimeoutError(
+                "Model request timed out",
+                code="model.timeout",
+                details={
+                    "requestId": request.request_id,
+                    "model": self.config.model.model,
+                },
+            ) from error
+        except ProviderError:
+            raise
+        except Exception as error:
+            raise ProviderError(
+                "Model provider raised an unexpected error",
+                code="provider.unexpected",
+                retryable=False,
+                details={
+                    "requestId": request.request_id,
+                    "errorType": type(error).__name__,
+                },
+            ) from error
+
+    async def _stream_chunks(
+        self, request: ModelRequest, request_event_id: str
+    ) -> tuple[list[ModelStreamChunk], dict[str, Any]]:
+        stream: AsyncIterator[ModelStreamChunk] | None = None
+        chunks: list[ModelStreamChunk] = []
+        try:
+            stream = self.provider.stream(request)
+            try:
+                async with asyncio.timeout(self.config.model.timeout_seconds):
+                    async for chunk in stream:
+                        chunks.append(chunk)
+                        await self.emitter.emit(
+                            EventType.MODEL_STREAM_CHUNK,
+                            {
+                                "requestId": request.request_id,
+                                "executionId": str(self.config.execution_id),
+                                "iteration": self.state.iteration,
+                                "sequence": len(chunks) - 1,
+                                "contentDeltaLength": len(chunk.content_delta),
+                                "toolCallDeltaCount": len(chunk.tool_calls),
+                                "done": chunk.done,
+                                "finishReason": (
+                                    chunk.finish_reason.value if chunk.finish_reason else None
+                                ),
+                                "usageReported": any(
+                                    value is not None
+                                    for value in (
+                                        chunk.usage.input_tokens,
+                                        chunk.usage.output_tokens,
+                                        chunk.usage.total_tokens,
+                                    )
+                                ),
+                            },
+                            causation_id=request_event_id,
+                        )
+            except TimeoutError as error:
+                raise ExecutionTimeoutError(
+                    "Model stream timed out",
+                    code="model.timeout",
+                    details={
+                        "requestId": request.request_id,
+                        "model": self.config.model.model,
+                    },
+                ) from error
+            except ProviderError:
+                raise
+            except HarnessError:
+                raise
+            except Exception as error:
+                raise ProviderError(
+                    "Model provider raised an unexpected error",
+                    code="provider.unexpected",
+                    retryable=False,
+                    details={
+                        "requestId": request.request_id,
+                        "errorType": type(error).__name__,
+                    },
+                ) from error
+        finally:
+            if stream is not None:
+                await self._close_stream(stream)
+        return chunks, {"streamed": True, "chunkCount": len(chunks)}
+
+    @staticmethod
+    async def _close_stream(stream: AsyncIterator[ModelStreamChunk]) -> None:
+        close = getattr(stream, "aclose", None)
+        if close is None:
+            return
+        with suppress(Exception):
+            await close()
+
+    async def _emit_invalid_response(
+        self,
+        request_id: str,
+        finish_reason: FinishReason,
+        error: InvalidModelResponseError,
+        request_event_id: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        await self.emitter.emit(
+            EventType.MODEL_RESPONDED,
+            {
+                "requestId": request_id,
+                "executionId": str(self.config.execution_id),
+                "decisionType": "invalid",
+                "finishReason": finish_reason.value,
+                "errorCode": error.code,
+                **metadata,
+            },
+            causation_id=request_event_id,
+        )
 
     async def _act_and_observe(self, call: ToolCallRequest, causation_id: str | None) -> None:
         spec = self.validator.validate(call)

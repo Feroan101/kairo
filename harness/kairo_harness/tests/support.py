@@ -39,12 +39,18 @@ def make_config(
     max_tool_calls: int = 4,
     execution_id: UUID | None = None,
     granted_permissions: frozenset[str] = frozenset(),
+    stream_responses: bool = False,
 ) -> ExecutionConfig:
     return ExecutionConfig(
         agent_id="agent-1",
         execution_id=execution_id or uuid4(),
         task=task,
-        model=ModelConfig(provider="mock", model="mock-model", timeout_seconds=1.0),
+        model=ModelConfig(
+            provider="mock",
+            model="mock-model",
+            timeout_seconds=1.0,
+            stream_responses=stream_responses,
+        ),
         tools=list(tools),
         granted_permissions=granted_permissions,
         max_iterations=max_iterations,

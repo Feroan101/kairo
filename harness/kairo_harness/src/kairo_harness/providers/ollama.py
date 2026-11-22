@@ -17,6 +17,7 @@ from kairo_harness.domain import (
     ModelResponse,
     ModelStreamChunk,
     OptionValue,
+    ToolCallDelta,
     ToolCallRequest,
     Usage,
 )
@@ -251,6 +252,26 @@ class OllamaProvider(ModelProvider):
         return normalized
 
     @staticmethod
+    def _tool_call_deltas(calls: list[OllamaToolCall]) -> list[ToolCallDelta]:
+        deltas: list[ToolCallDelta] = []
+        for index, call in enumerate(calls):
+            arguments = call.function.arguments
+            arguments_delta = ""
+            if isinstance(arguments, str):
+                arguments_delta = arguments
+            elif arguments is not None:
+                arguments_delta = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+            deltas.append(
+                ToolCallDelta(
+                    index=index,
+                    id=call.id or str(uuid.uuid4()),
+                    name=call.function.name,
+                    arguments_delta=arguments_delta,
+                )
+            )
+        return deltas
+
+    @staticmethod
     def _usage(payload: dict[str, Any]) -> Usage:
         input_tokens = payload.get("prompt_eval_count")
         output_tokens = payload.get("eval_count")
@@ -270,6 +291,18 @@ class OllamaProvider(ModelProvider):
         if done_reason == "length":
             return FinishReason.LENGTH
         return FinishReason.STOP
+
+    @staticmethod
+    def _stream_finish_reason(
+        done: bool, done_reason: str | None, has_tool_calls: bool
+    ) -> FinishReason | None:
+        if done_reason == "length":
+            return FinishReason.LENGTH
+        if done and has_tool_calls:
+            return FinishReason.TOOL_CALL
+        if done:
+            return FinishReason.STOP
+        return None
 
     def _stream_chunk(self, line: str) -> ModelStreamChunk:
         try:
@@ -300,11 +333,16 @@ class OllamaProvider(ModelProvider):
                 details={"issueCount": len(error.errors())},
             ) from error
 
+        done = bool(payload.get("done", False))
+        raw_done_reason = payload.get("done_reason")
+        done_reason = raw_done_reason if isinstance(raw_done_reason, str) else None
+        tool_calls = self._tool_call_deltas(message.tool_calls)
         return ModelStreamChunk(
             content_delta=message.content,
-            tool_calls=self._tool_calls(message.tool_calls),
+            tool_calls=tool_calls,
             usage=self._usage(payload),
-            done=bool(payload.get("done", False)),
+            done=done,
+            finish_reason=self._stream_finish_reason(done, done_reason, bool(tool_calls)),
         )
 
     @staticmethod

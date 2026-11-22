@@ -16,6 +16,7 @@ class ModelConfig(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, gt=0)
     timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    stream_responses: bool = False
 
 
 class ExecutionConfig(BaseModel):

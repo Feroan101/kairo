@@ -39,6 +39,7 @@ class EventType:
     EXECUTION_FAILED = "execution.failed"
     EXECUTION_CANCELLED = "execution.cancelled"
     MODEL_REQUESTED = "model.requested"
+    MODEL_STREAM_CHUNK = "model.stream.chunk"
     MODEL_RESPONDED = "model.responded"
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"

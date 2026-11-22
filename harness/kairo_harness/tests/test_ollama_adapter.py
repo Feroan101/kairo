@@ -4,7 +4,13 @@ from collections.abc import Callable
 
 import httpx
 import pytest
-from kairo_harness.domain import FinishReason, ModelMessage, ModelRequest, ModelRole
+from kairo_harness.domain import (
+    FinishReason,
+    ModelMessage,
+    ModelRequest,
+    ModelRole,
+    aggregate_stream_chunks,
+)
 from kairo_harness.errors import ProviderError
 from kairo_harness.providers.ollama import OllamaConfig, OllamaProvider
 
@@ -128,6 +134,51 @@ def test_stream_parses_ndjson_chunks() -> None:
             assert "".join(chunk.content_delta for chunk in chunks) == "hello"
             assert chunks[-1].usage.total_tokens == 7
             assert chunks[-1].done is True
+
+    asyncio.run(scenario())
+
+
+def test_stream_reconstructs_native_tool_calls_and_finish_reason() -> None:
+    first = {
+        "message": {
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "function": {"name": "echo", "arguments": '{"value":'},
+                }
+            ]
+        },
+        "done": False,
+    }
+    second = {
+        "message": {
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "function": {"name": "echo", "arguments": '"hi"}'},
+                }
+            ]
+        },
+        "done": True,
+        "done_reason": "stop",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["stream"] is True
+        return httpx.Response(200, text="\n".join(json.dumps(item) for item in (first, second)))
+
+    provider, client = provider_for(handler)
+
+    async def scenario() -> None:
+        async with client:
+            chunks = [chunk async for chunk in provider.stream(make_request())]
+            assert chunks[0].finish_reason is None
+            assert chunks[1].finish_reason == FinishReason.TOOL_CALL
+            aggregated = aggregate_stream_chunks(chunks)
+            assert aggregated.finish_reason == FinishReason.TOOL_CALL
+            assert aggregated.tool_calls[0].id == "call-1"
+            assert aggregated.tool_calls[0].name == "echo"
+            assert aggregated.tool_calls[0].arguments == {"value": "hi"}
 
     asyncio.run(scenario())
 
