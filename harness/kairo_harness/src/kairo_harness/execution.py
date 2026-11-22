@@ -31,7 +31,12 @@ from kairo_harness.errors import (
 from kairo_harness.events import EventEmitter, EventSink, EventType, InMemoryEventSink
 from kairo_harness.providers.base import ModelProvider
 from kairo_harness.state import ExecutionResult, ExecutionState, ExecutionStatus, TerminalReason
-from kairo_harness.tools import ToolCallValidator, ToolExecutor
+from kairo_harness.tools import (
+    RegistryToolExecutor,
+    ToolCallValidator,
+    ToolExecutor,
+    ToolRegistrySnapshot,
+)
 
 SYSTEM_PROMPT = (
     "You are a Kairo agent. Complete the user's task. Prefer native tool calls when a tool is "
@@ -48,6 +53,8 @@ class ExecutionRunner:
         provider: ModelProvider,
         tool_executor: ToolExecutor,
         event_sink: EventSink | None = None,
+        *,
+        tool_registry: ToolRegistrySnapshot | None = None,
     ) -> None:
         if provider.name != config.model.provider:
             raise ConfigError(
@@ -64,7 +71,12 @@ class ExecutionRunner:
             correlation_id=config.correlation_id or config.execution_id,
             sink=self.sink,
         )
-        self.validator = ToolCallValidator(config.tools)
+        registry_snapshot = tool_registry or (
+            tool_executor.snapshot if isinstance(tool_executor, RegistryToolExecutor) else None
+        )
+        tool_specs = registry_snapshot.specs() if registry_snapshot else config.tools
+        self._granted_permissions = frozenset(config.granted_permissions)
+        self.validator = ToolCallValidator(tool_specs, self._granted_permissions)
         self.state = ExecutionState(execution_id=config.execution_id)
         self.context = ExecutionContext()
         self._last_model_response_event_id: str | None = None
@@ -163,7 +175,7 @@ class ExecutionRunner:
 
     async def _reason(self) -> FinalDecision | ToolCallDecision:
         request_id = str(uuid.uuid4())
-        allowed_tools = [spec for spec in self.config.tools if spec.allowed]
+        allowed_tools = list(self.validator.authorized_specs())
         request = ModelRequest(
             request_id=request_id,
             model=self.config.model.model,

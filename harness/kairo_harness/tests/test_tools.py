@@ -29,7 +29,7 @@ def test_validator_rejects_arguments_outside_schema() -> None:
 def test_validator_accepts_allowed_tool_with_valid_arguments() -> None:
     spec = make_tool()
     validator = ToolCallValidator([spec])
-    assert validator.validate(tool_call(value="hello")) is spec
+    assert validator.validate(tool_call(value="hello")) == spec
 
 
 def test_validator_rejects_invalid_json_schema_at_construction() -> None:

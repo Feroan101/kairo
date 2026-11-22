@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from kairo_harness.domain import OptionValue, ToolSpec
+from kairo_harness.domain import OptionValue, ToolSpec, validate_permission_names
 
 
 class ModelConfig(BaseModel):
@@ -26,11 +26,17 @@ class ExecutionConfig(BaseModel):
     task: str = Field(min_length=1)
     model: ModelConfig
     tools: list[ToolSpec] = Field(default_factory=list)
+    granted_permissions: frozenset[str] = Field(default_factory=frozenset)
     max_iterations: int = Field(default=8, ge=1, le=100)
     max_model_requests: int = Field(default=8, ge=1, le=100)
     max_tool_calls: int = Field(default=4, ge=0, le=100)
     timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
     correlation_id: UUID | None = None
+
+    @field_validator("granted_permissions")
+    @classmethod
+    def validate_granted_permissions(cls, value: frozenset[str]) -> frozenset[str]:
+        return validate_permission_names(value)
 
     @model_validator(mode="after")
     def apply_default_correlation_id(self) -> ExecutionConfig:

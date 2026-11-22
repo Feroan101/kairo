@@ -14,12 +14,18 @@ ECHO_SCHEMA = {
 }
 
 
-def make_tool(name: str = "echo", *, allowed: bool = True) -> ToolSpec:
+def make_tool(
+    name: str = "echo",
+    *,
+    allowed: bool = True,
+    required_permissions: frozenset[str] = frozenset(),
+) -> ToolSpec:
     return ToolSpec(
         name=name,
         description="Echo a value",
         input_schema=ECHO_SCHEMA,
         allowed=allowed,
+        required_permissions=required_permissions,
         timeout_seconds=1.0,
     )
 
@@ -32,6 +38,7 @@ def make_config(
     max_model_requests: int = 4,
     max_tool_calls: int = 4,
     execution_id: UUID | None = None,
+    granted_permissions: frozenset[str] = frozenset(),
 ) -> ExecutionConfig:
     return ExecutionConfig(
         agent_id="agent-1",
@@ -39,6 +46,7 @@ def make_config(
         task=task,
         model=ModelConfig(provider="mock", model="mock-model", timeout_seconds=1.0),
         tools=list(tools),
+        granted_permissions=granted_permissions,
         max_iterations=max_iterations,
         max_model_requests=max_model_requests,
         max_tool_calls=max_tool_calls,

@@ -1,16 +1,32 @@
 from __future__ import annotations
 
 import json
+import re
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from kairo_harness.errors import InvalidModelResponseError
 
 type OptionValue = str | int | float | bool
 
 TOOL_CALL_ACTION_TYPE = "tool_call"
+PERMISSION_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_.:-]{0,127}$")
+
+
+def validate_permission_names(values: frozenset[str]) -> frozenset[str]:
+    for value in values:
+        if not PERMISSION_NAME_PATTERN.fullmatch(value):
+            raise ValueError("permission names must be lowercase identifiers")
+    return values
 
 
 class ModelRole(StrEnum):
@@ -50,7 +66,13 @@ class ToolSpec(BaseModel):
     description: str = Field(min_length=1, max_length=1000)
     input_schema: dict[str, Any]
     allowed: bool = False
+    required_permissions: frozenset[str] = Field(default_factory=frozenset)
     timeout_seconds: float = Field(default=10.0, gt=0, le=300)
+
+    @field_validator("required_permissions")
+    @classmethod
+    def validate_required_permissions(cls, value: frozenset[str]) -> frozenset[str]:
+        return validate_permission_names(value)
 
     @model_validator(mode="after")
     def validate_input_schema(self) -> ToolSpec:

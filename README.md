@@ -128,7 +128,9 @@ uv run --project harness/kairo_harness python harness/kairo_harness/scripts/olla
 
 `localhost` is only correct when the harness itself runs on the machine hosting Ollama. In a container or distributed deployment, configure a reachable host or gateway endpoint.
 
-Model tool decisions must be native provider tool calls or the strictly validated JSON action format `{"type":"tool_call","tool_calls":[...]}`. Plain text is treated only as a final answer and is never executed. Emitted events use the shared versioned envelopes, redact sensitive fields, and do not include hidden reasoning or raw prompts.
+Model tool decisions must be native provider tool calls or the strictly validated JSON action format `{"type":"tool_call","tool_calls":[...]}`. Plain text is treated only as a final answer and is never executed.
+
+Tools are registered through `ToolRegistry` with unique names, JSON Schema definitions, handlers, and required permissions. A runner receives an immutable registry snapshot and an immutable set of execution permissions; later registry changes or handler output cannot grant access to additional tools. Authorization and schema validation happen before handler invocation, and handler errors, invalid results, and timeouts become structured `ToolResult` errors that the ReAct loop observes. Emitted events use the shared versioned envelopes, redact sensitive fields, and do not include hidden reasoning or raw prompts.
 
 ## Verification
 

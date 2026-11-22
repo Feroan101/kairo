@@ -4,6 +4,7 @@ from kairo_harness.events import EventSink, InMemoryEventSink
 from kairo_harness.execution import ExecutionRunner
 from kairo_harness.providers import MockProvider, ModelProvider, OllamaConfig, OllamaProvider
 from kairo_harness.state import ExecutionResult, ExecutionState, ExecutionStatus
+from kairo_harness.tools import RegistryToolExecutor, Tool, ToolRegistry, ToolRegistrySnapshot
 
 __all__ = [
     "EventSink",
@@ -18,6 +19,10 @@ __all__ = [
     "ModelProvider",
     "OllamaConfig",
     "OllamaProvider",
+    "RegistryToolExecutor",
+    "Tool",
+    "ToolRegistry",
+    "ToolRegistrySnapshot",
     "ToolResult",
     "ToolSpec",
     "Usage",
