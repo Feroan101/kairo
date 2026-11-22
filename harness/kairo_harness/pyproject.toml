@@ -1,0 +1,27 @@
+[project]
+name = "kairo-harness"
+version = "0.0.0"
+description = "Kairo native agent harness"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "jsonschema==4.26.0",
+    "pydantic==2.14.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.2.0",
+    "ruff==0.15.22",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = true
+required-version = ">=0.11.11,<0.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,37 @@
+{
+  "name": "kairo",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=24.19.0 <25"
+  },
+  "scripts": {
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "check": "biome check .",
+    "python:sync": "uv sync --project harness/kairo_harness",
+    "python:format": "uv run --project harness/kairo_harness ruff format .",
+    "python:format:check": "uv run --project harness/kairo_harness ruff format --check .",
+    "python:lint": "uv run --project harness/kairo_harness ruff check .",
+    "python:check": "pnpm run python:format:check && pnpm run python:lint",
+    "test": "pnpm -r --if-present test && pnpm run test:python",
+    "test:python": "uv run --project harness/kairo_harness pytest",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "check:all": "pnpm run check && pnpm run typecheck && pnpm run python:check",
+    "verify": "pnpm run check:all && pnpm run test",
+    "workspaces": "pnpm -r list --depth -1",
+    "dev:config": "docker compose config",
+    "dev:up": "docker compose up -d postgres",
+    "dev:down": "docker compose down",
+    "dev:logs": "docker compose logs -f",
+    "dev:health": "docker compose ps && docker compose exec -T postgres sh -c 'pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"'",
+    "dev:images:build": "docker compose build",
+    "dev:db:reset": "docker compose down -v && docker compose up -d postgres",
+    "db:migrate": "pnpm --filter @kairo/control-plane db:migrate"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.8"
+  }
+}

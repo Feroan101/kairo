@@ -1,0 +1,10 @@
+{
+  "extends": "@kairo/config/tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["src", "test", "schemas", "fixtures"]
+}

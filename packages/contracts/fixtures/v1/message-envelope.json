@@ -1,0 +1,103 @@
+{
+  "kind": "message-envelope",
+  "schemaVersion": "1.0.0",
+  "valid": [
+    {
+      "name": "minimal message with flexible payload",
+      "value": {
+        "messageId": "11111111-1111-4111-8111-111111111111",
+        "type": "agent.delegation.requested",
+        "schemaVersion": "1.0.0",
+        "createdAt": "2026-01-15T12:00:00Z",
+        "payload": {
+          "taskId": "22222222-2222-4222-8222-222222222222",
+          "instructions": "Review the shared contract fixtures",
+          "options": {
+            "priority": "normal",
+            "retry": true
+          }
+        }
+      }
+    },
+    {
+      "name": "message with routing and correlation metadata",
+      "value": {
+        "messageId": "33333333-3333-4333-8333-333333333333",
+        "type": "agent.coordination.result",
+        "schemaVersion": "1.0.0",
+        "createdAt": "2026-01-15T12:00:00.123456Z",
+        "correlationId": "44444444-4444-4444-8444-444444444444",
+        "causationId": "55555555-5555-4555-8555-555555555555",
+        "sender": {
+          "id": "agent-1",
+          "kind": "agent"
+        },
+        "recipient": {
+          "id": "team-1",
+          "kind": "team"
+        },
+        "payload": {
+          "status": "completed",
+          "artifactRefs": ["s3://kairo-artifacts/result.json"]
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "missing messageId",
+      "reason": "required envelope field is absent",
+      "value": {
+        "type": "agent.delegation.requested",
+        "schemaVersion": "1.0.0",
+        "createdAt": "2026-01-15T12:00:00Z",
+        "payload": {}
+      }
+    },
+    {
+      "name": "invalid createdAt",
+      "reason": "timestamp is not RFC 3339 UTC",
+      "value": {
+        "messageId": "11111111-1111-4111-8111-111111111111",
+        "type": "agent.delegation.requested",
+        "schemaVersion": "1.0.0",
+        "createdAt": "2026-01-15 12:00:00Z",
+        "payload": {}
+      }
+    },
+    {
+      "name": "unsupported schemaVersion",
+      "reason": "version is not supported by the v1 schema",
+      "value": {
+        "messageId": "11111111-1111-4111-8111-111111111111",
+        "type": "agent.delegation.requested",
+        "schemaVersion": "2.0.0",
+        "createdAt": "2026-01-15T12:00:00Z",
+        "payload": {}
+      }
+    },
+    {
+      "name": "unexpected envelope property",
+      "reason": "envelope fields are closed",
+      "value": {
+        "messageId": "11111111-1111-4111-8111-111111111111",
+        "type": "agent.delegation.requested",
+        "schemaVersion": "1.0.0",
+        "createdAt": "2026-01-15T12:00:00Z",
+        "payload": {},
+        "deliveryMode": "at-least-once"
+      }
+    },
+    {
+      "name": "invalid messageId",
+      "reason": "identifier is not a UUID",
+      "value": {
+        "messageId": "message-1",
+        "type": "agent.delegation.requested",
+        "schemaVersion": "1.0.0",
+        "createdAt": "2026-01-15T12:00:00Z",
+        "payload": {}
+      }
+    }
+  ]
+}
