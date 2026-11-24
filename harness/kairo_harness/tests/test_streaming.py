@@ -3,6 +3,7 @@ from collections import deque
 from collections.abc import Sequence
 
 import pytest
+from kairo_harness.contracts import EventEnvelope
 from kairo_harness.domain import (
     FinishReason,
     ModelRequest,
@@ -17,7 +18,7 @@ from kairo_harness.errors import ProviderError
 from kairo_harness.events import EventType, InMemoryEventSink
 from kairo_harness.execution import ExecutionRunner
 from kairo_harness.providers.mock import MockProvider
-from kairo_harness.state import ExecutionStatus
+from kairo_harness.state import ExecutionStatus, TerminalReason
 from support import ScriptedToolExecutor, make_config, make_tool, response
 
 
@@ -47,14 +48,18 @@ class ChunkProvider(MockProvider):
         super().__init__(responses)
         self._chunks: deque[Sequence[ModelStreamChunk]] = deque(chunks)
         self.stream_calls = 0
+        self.closed = False
 
     async def stream(self, request: ModelRequest):
         self.requests.append(request.model_copy(deep=True))
         self.stream_calls += 1
         if not self._chunks:
             raise ProviderError("No streamed chunks queued", code="mock.no_queued_stream")
-        for item in self._chunks.popleft():
-            yield item
+        try:
+            for item in self._chunks.popleft():
+                yield item
+        finally:
+            self.closed = True
 
 
 class SlowStreamProvider(MockProvider):
@@ -75,6 +80,13 @@ class SlowStreamProvider(MockProvider):
                 self.closed = True
 
         return chunks()
+
+
+class FailingStreamEventSink(InMemoryEventSink):
+    async def emit(self, event: EventEnvelope) -> None:
+        if event.type == EventType.MODEL_STREAM_CHUNK:
+            raise RuntimeError("sink unavailable")
+        await super().emit(event)
 
 
 def test_streaming_is_opt_in_and_non_streaming_events_are_unchanged() -> None:
@@ -105,7 +117,7 @@ def test_streamed_response_is_aggregated_without_exposing_content() -> None:
                 ),
                 chunk(
                     "SECRET",
-                    usage=Usage(input_tokens=3, output_tokens=5, total_tokens=8),
+                    usage=Usage(input_tokens=0, output_tokens=4, total_tokens=4),
                     done=True,
                     finish_reason=FinishReason.STOP,
                 ),
@@ -219,13 +231,13 @@ def test_streamed_tool_call_permissions_are_enforced_before_execution() -> None:
     assert executor.calls == []
 
 
-def test_aggregate_stream_usage_uses_cumulative_values_without_double_counting() -> None:
+def test_aggregate_stream_usage_sums_per_chunk_deltas() -> None:
     response = aggregate_stream_chunks(
         [
             chunk(usage=Usage(input_tokens=3, output_tokens=1, total_tokens=4)),
-            chunk(usage=Usage(input_tokens=3, output_tokens=1, total_tokens=4)),
+            chunk(usage=Usage(input_tokens=0, output_tokens=0, total_tokens=0)),
             chunk(
-                usage=Usage(input_tokens=3, output_tokens=5, total_tokens=8),
+                usage=Usage(input_tokens=0, output_tokens=4, total_tokens=4),
                 done=True,
                 finish_reason=FinishReason.STOP,
             ),
@@ -235,6 +247,36 @@ def test_aggregate_stream_usage_uses_cumulative_values_without_double_counting()
     assert response.usage.input_tokens == 3
     assert response.usage.output_tokens == 5
     assert response.usage.total_tokens == 8
+
+
+def test_aggregate_stream_usage_derives_missing_total_from_deltas() -> None:
+    response = aggregate_stream_chunks(
+        [
+            chunk(usage=Usage(input_tokens=3, output_tokens=1)),
+            chunk(
+                usage=Usage(input_tokens=0, output_tokens=4),
+                done=True,
+                finish_reason=FinishReason.STOP,
+            ),
+        ]
+    )
+
+    assert response.usage.input_tokens == 3
+    assert response.usage.output_tokens == 5
+    assert response.usage.total_tokens == 8
+
+
+def test_aggregate_stream_usage_derives_total_from_sparse_deltas() -> None:
+    response = aggregate_stream_chunks(
+        [
+            chunk(usage=Usage(input_tokens=5)),
+            chunk(usage=Usage(output_tokens=6), done=True, finish_reason=FinishReason.STOP),
+        ]
+    )
+
+    assert response.usage.input_tokens == 5
+    assert response.usage.output_tokens == 6
+    assert response.usage.total_tokens == 11
 
 
 def test_tool_call_stream_without_done_is_incomplete() -> None:
@@ -314,3 +356,22 @@ def test_stream_cancellation_closes_the_async_stream() -> None:
 
     assert provider.closed is True
     assert runner.state.status == ExecutionStatus.CANCELLED
+
+
+def test_event_sink_failure_is_not_reported_as_provider_failure() -> None:
+    provider = ChunkProvider(chunks=[[chunk("done", done=True, finish_reason=FinishReason.STOP)]])
+    runner = ExecutionRunner(
+        make_config(stream_responses=True),
+        provider,
+        ScriptedToolExecutor(),
+        FailingStreamEventSink(),
+    )
+
+    result = asyncio.run(runner.run())
+
+    assert result.status == ExecutionStatus.FAILED
+    assert result.error is not None
+    assert result.error.code == "event.emit_failed"
+    assert result.error.code != "provider.unexpected"
+    assert result.state.terminal_reason == TerminalReason.INTERNAL_ERROR
+    assert provider.closed is True

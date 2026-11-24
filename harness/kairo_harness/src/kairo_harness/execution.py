@@ -310,30 +310,43 @@ class ExecutionRunner:
                 async with asyncio.timeout(self.config.model.timeout_seconds):
                     async for chunk in stream:
                         chunks.append(chunk)
-                        await self.emitter.emit(
-                            EventType.MODEL_STREAM_CHUNK,
-                            {
-                                "requestId": request.request_id,
-                                "executionId": str(self.config.execution_id),
-                                "iteration": self.state.iteration,
-                                "sequence": len(chunks) - 1,
-                                "contentDeltaLength": len(chunk.content_delta),
-                                "toolCallDeltaCount": len(chunk.tool_calls),
-                                "done": chunk.done,
-                                "finishReason": (
-                                    chunk.finish_reason.value if chunk.finish_reason else None
-                                ),
-                                "usageReported": any(
-                                    value is not None
-                                    for value in (
-                                        chunk.usage.input_tokens,
-                                        chunk.usage.output_tokens,
-                                        chunk.usage.total_tokens,
-                                    )
-                                ),
-                            },
-                            causation_id=request_event_id,
-                        )
+                        try:
+                            await self.emitter.emit(
+                                EventType.MODEL_STREAM_CHUNK,
+                                {
+                                    "requestId": request.request_id,
+                                    "executionId": str(self.config.execution_id),
+                                    "iteration": self.state.iteration,
+                                    "sequence": len(chunks) - 1,
+                                    "contentDeltaLength": len(chunk.content_delta),
+                                    "toolCallDeltaCount": len(chunk.tool_calls),
+                                    "done": chunk.done,
+                                    "finishReason": (
+                                        chunk.finish_reason.value if chunk.finish_reason else None
+                                    ),
+                                    "usageReported": any(
+                                        value is not None
+                                        for value in (
+                                            chunk.usage.input_tokens,
+                                            chunk.usage.output_tokens,
+                                            chunk.usage.total_tokens,
+                                        )
+                                    ),
+                                },
+                                causation_id=request_event_id,
+                            )
+                        except HarnessError:
+                            raise
+                        except Exception as error:
+                            raise HarnessError(
+                                "Failed to emit model stream event",
+                                code="event.emit_failed",
+                                retryable=False,
+                                details={
+                                    "requestId": request.request_id,
+                                    "errorType": type(error).__name__,
+                                },
+                            ) from error
             except TimeoutError as error:
                 raise ExecutionTimeoutError(
                     "Model stream timed out",
@@ -518,6 +531,8 @@ class ExecutionRunner:
             return TerminalReason.TOOL_ERROR
         if isinstance(error, ProviderError):
             return TerminalReason.MODEL_ERROR
+        if error.code == "event.emit_failed":
+            return TerminalReason.INTERNAL_ERROR
         return TerminalReason.CONFIGURATION_ERROR
 
     def _add_usage(self, usage: Usage) -> None:

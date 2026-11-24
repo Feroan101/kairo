@@ -147,13 +147,29 @@ class OllamaProvider(ModelProvider):
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamChunk]:
         payload = self._chat_payload(request, stream=True)
+        previous_input_tokens: int | None = None
+        previous_output_tokens: int | None = None
+        previous_total_tokens: int | None = None
         try:
             async with self._client.stream("POST", "/api/chat", json=payload) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line.strip():
                         continue
-                    yield self._stream_chunk(line)
+                    chunk = self._stream_chunk(line)
+                    usage = self._usage_delta(
+                        chunk.usage,
+                        previous_input_tokens,
+                        previous_output_tokens,
+                        previous_total_tokens,
+                    )
+                    if chunk.usage.input_tokens is not None:
+                        previous_input_tokens = chunk.usage.input_tokens
+                    if chunk.usage.output_tokens is not None:
+                        previous_output_tokens = chunk.usage.output_tokens
+                    if chunk.usage.total_tokens is not None:
+                        previous_total_tokens = chunk.usage.total_tokens
+                    yield chunk.model_copy(update={"usage": usage})
         except ProviderError:
             raise
         except Exception as error:
@@ -264,12 +280,40 @@ class OllamaProvider(ModelProvider):
             deltas.append(
                 ToolCallDelta(
                     index=index,
-                    id=call.id or str(uuid.uuid4()),
+                    id=call.id or None,
                     name=call.function.name,
                     arguments_delta=arguments_delta,
                 )
             )
         return deltas
+
+    @staticmethod
+    def _counter_delta(current: int | None, previous: int | None) -> int | None:
+        if current is None:
+            return None
+        if previous is None or current < previous:
+            return current
+        return current - previous
+
+    @classmethod
+    def _usage_delta(
+        cls,
+        current: Usage,
+        previous_input_tokens: int | None,
+        previous_output_tokens: int | None,
+        previous_total_tokens: int | None,
+    ) -> Usage:
+        input_delta = cls._counter_delta(current.input_tokens, previous_input_tokens)
+        output_delta = cls._counter_delta(current.output_tokens, previous_output_tokens)
+        if input_delta is not None and output_delta is not None:
+            total_delta: int | None = input_delta + output_delta
+        else:
+            total_delta = cls._counter_delta(current.total_tokens, previous_total_tokens)
+        return Usage(
+            input_tokens=input_delta,
+            output_tokens=output_delta,
+            total_tokens=total_delta,
+        )
 
     @staticmethod
     def _usage(payload: dict[str, Any]) -> Usage:

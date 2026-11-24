@@ -186,7 +186,10 @@ class ModelStreamChunk(BaseModel):
 
     content_delta: str = ""
     tool_calls: list[ToolCallDelta | ToolCallRequest] = Field(default_factory=list)
-    usage: Usage = Field(default_factory=Usage)
+    usage: Usage = Field(
+        default_factory=Usage,
+        description="Per-chunk usage delta; providers normalize cumulative counters.",
+    )
     done: bool = False
     finish_reason: FinishReason | None = None
 
@@ -379,17 +382,28 @@ def _accumulate_tool_calls(chunks: Sequence[ModelStreamChunk]) -> list[ToolCallR
 def _aggregate_usage(chunks: Sequence[ModelStreamChunk]) -> Usage:
     usage = Usage()
     for chunk in chunks:
-        for field_name in ("input_tokens", "output_tokens", "total_tokens"):
-            incoming = getattr(chunk.usage, field_name)
+        total_tokens = chunk.usage.total_tokens
+        if (
+            total_tokens is None
+            and chunk.usage.input_tokens is not None
+            and chunk.usage.output_tokens is not None
+        ):
+            total_tokens = chunk.usage.input_tokens + chunk.usage.output_tokens
+        for field_name, incoming in (
+            ("input_tokens", chunk.usage.input_tokens),
+            ("output_tokens", chunk.usage.output_tokens),
+            ("total_tokens", total_tokens),
+        ):
             if incoming is None:
                 continue
             current = getattr(usage, field_name)
-            if current is None or incoming > current:
-                setattr(usage, field_name, incoming)
-    if usage.total_tokens is None and (
-        usage.input_tokens is not None or usage.output_tokens is not None
+            setattr(usage, field_name, incoming if current is None else current + incoming)
+    if (
+        usage.total_tokens is None
+        and usage.input_tokens is not None
+        and usage.output_tokens is not None
     ):
-        usage.total_tokens = (usage.input_tokens or 0) + (usage.output_tokens or 0)
+        usage.total_tokens = usage.input_tokens + usage.output_tokens
     return usage
 
 
