@@ -25,6 +25,7 @@ class ExecutionConfig(BaseModel):
     agent_id: str = Field(min_length=1, max_length=200)
     execution_id: UUID
     task: str = Field(min_length=1)
+    system_instructions: str | None = Field(default=None, max_length=8000)
     model: ModelConfig
     tools: list[ToolSpec] = Field(default_factory=list)
     granted_permissions: frozenset[str] = Field(default_factory=frozenset)

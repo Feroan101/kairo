@@ -104,6 +104,12 @@ class ToolExecutor(ABC):
     @abstractmethod
     async def execute(self, call: ToolCallRequest, spec: ToolSpec) -> ToolResult: ...
 
+    async def cancel(self, call: ToolCallRequest) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
 
 class ToolCallValidator:
     def __init__(

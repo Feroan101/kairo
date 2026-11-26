@@ -50,8 +50,11 @@ def test_final_response_completes_without_tool_execution() -> None:
     assert executor.calls == []
     assert event_types(sink) == [
         EventType.EXECUTION_STARTED,
+        EventType.EXECUTION_CHECKPOINTED,
+        EventType.EXECUTION_CHECKPOINTED,
         EventType.MODEL_REQUESTED,
         EventType.MODEL_RESPONDED,
+        EventType.EXECUTION_CHECKPOINTED,
         EventType.EXECUTION_COMPLETED,
     ]
     assert provider.requests[0].tools == []
