@@ -827,6 +827,85 @@ def test_runner_enforces_permissions_for_adapter_tool_calls(name: ProviderName) 
 
 
 @pytest.mark.parametrize("name", PROVIDER_NAMES)
+def test_adapter_complete_missing_tool_call_id_behavior(name: ProviderName) -> None:
+    if name == "openai":
+        raw_response: Any = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id=None,
+                                function=SimpleNamespace(name="echo", arguments="{}"),
+                            )
+                        ],
+                    ),
+                    finish_reason="tool_calls",
+                )
+            ],
+            usage=None,
+        )
+    elif name == "anthropic":
+        raw_response = SimpleNamespace(
+            content=[SimpleNamespace(type="tool_use", id=None, name="echo", input={"value": "hi"})],
+            stop_reason="tool_use",
+            usage=None,
+        )
+    else:
+        raw_response = build_response(name, calls=[call_spec(None, "echo", {"value": "hi"})])
+    stub = make_stub(name, responses=[raw_response])
+
+    if name in {"openai", "anthropic"}:
+        with pytest.raises(ProviderError) as error_info:
+            asyncio.run(stub.provider.complete(make_request(name, [make_tool()])))
+        assert error_info.value.code == "provider.invalid_tool_call"
+        return
+
+    result = asyncio.run(stub.provider.complete(make_request(name, [make_tool()])))
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].id
+    assert result.tool_calls[0].arguments == {"value": "hi"}
+
+
+def test_runner_permission_snapshot_is_authoritative_for_registry_executor() -> None:
+    name: ProviderName = "openai"
+    spec = make_tool("echo", required_permissions=frozenset({"admin.use"}))
+    stub = make_stub(
+        name,
+        responses=[
+            build_response(name, calls=[call_spec("call-a", "echo", {"value": "hi"})]),
+            build_response(name, content="done"),
+        ],
+    )
+    sink = InMemoryEventSink()
+    invoked: list[dict[str, Any]] = []
+    executor = RegistryToolExecutor(
+        make_registry([spec], recording_handler(invoked)),
+        granted_permissions=frozenset({"admin.use"}),
+    )
+    config = make_config(
+        provider=name,
+        model=PROVIDER_MODELS[name],
+        tools=[spec],
+        granted_permissions=frozenset(),
+    )
+    runner = ExecutionRunner(config, stub.provider, executor, sink)
+
+    result = asyncio.run(runner.run())
+
+    assert result.status.value == "failed"
+    assert result.error is not None
+    assert result.error.code == "tool.permission_denied"
+    assert invoked == []
+    assert events_of(sink, EventType.TOOL_STARTED) == []
+    assert events_of(sink, EventType.TOOL_FAILED) == []
+    assert events_of(sink, EventType.EXECUTION_FAILED)
+    assert len(stub.payloads) == 1
+
+
+@pytest.mark.parametrize("name", PROVIDER_NAMES)
 def test_runner_executes_multiple_adapter_tool_calls_with_registry_executor(
     name: ProviderName,
 ) -> None:

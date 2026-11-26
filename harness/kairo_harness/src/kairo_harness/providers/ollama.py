@@ -24,7 +24,12 @@ from kairo_harness.domain import (
     usage_delta,
 )
 from kairo_harness.errors import ProviderError
-from kairo_harness.providers.base import ModelProvider, ProviderAdapterConfig
+from kairo_harness.providers.base import (
+    ModelProvider,
+    ProviderAdapterConfig,
+    build_tool_call,
+    require_tool_arguments,
+)
 
 
 class OllamaConfig(ProviderAdapterConfig):
@@ -108,7 +113,7 @@ class OllamaProvider(ModelProvider):
         return self.config.capabilities
 
     def capabilities_for(self, model: str) -> ModelCapabilities:
-        return self.config.model_capabilities.get(model, self.config.capabilities)
+        return self.config.capabilities_for(model)
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -268,37 +273,15 @@ class OllamaProvider(ModelProvider):
     def _tool_calls(calls: list[OllamaToolCall]) -> list[ToolCallRequest]:
         normalized: list[ToolCallRequest] = []
         for call in calls:
-            arguments = call.function.arguments
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except ValueError as error:
-                    raise ProviderError(
-                        "Ollama returned malformed tool arguments",
-                        code="provider.invalid_tool_arguments",
-                        retryable=False,
-                    ) from error
-            if not isinstance(arguments, dict):
-                raise ProviderError(
-                    "Ollama returned tool arguments that were not an object",
-                    code="provider.invalid_tool_arguments",
-                    retryable=False,
+            arguments = require_tool_arguments("Ollama", call.function.arguments, parse_json=True)
+            normalized.append(
+                build_tool_call(
+                    "Ollama",
+                    call_id=call.id or str(uuid.uuid4()),
+                    name=call.function.name,
+                    arguments=arguments,
                 )
-            try:
-                normalized.append(
-                    ToolCallRequest(
-                        id=call.id or str(uuid.uuid4()),
-                        name=call.function.name,
-                        arguments=arguments,
-                    )
-                )
-            except ValidationError as error:
-                raise ProviderError(
-                    "Ollama returned an invalid tool call",
-                    code="provider.invalid_tool_call",
-                    retryable=False,
-                    details={"issueCount": len(error.errors())},
-                ) from error
+            )
         return normalized
 
     @staticmethod

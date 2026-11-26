@@ -2,7 +2,6 @@ import asyncio
 import json
 
 from kairo_harness.checkpoint import (
-    SAFE_CHECKPOINT_BOUNDARIES,
     Checkpoint,
     CheckpointBoundary,
     CheckpointRecorder,
@@ -18,16 +17,14 @@ from kairo_harness.state import ExecutionState, ExecutionStatus
 from support import ScriptedToolExecutor, make_config, make_tool, response, tool_call
 
 
-def test_safe_checkpoint_boundaries_are_explicit() -> None:
-    assert SAFE_CHECKPOINT_BOUNDARIES == frozenset(
-        {
-            CheckpointBoundary.EXECUTION_STARTED,
-            CheckpointBoundary.BEFORE_MODEL_REQUEST,
-            CheckpointBoundary.AFTER_MODEL_RESPONSE,
-            CheckpointBoundary.AFTER_TOOL_RESULT,
-            CheckpointBoundary.BEFORE_COMPLETION,
-        }
-    )
+def test_checkpoint_boundaries_are_explicit() -> None:
+    assert set(CheckpointBoundary) == {
+        CheckpointBoundary.EXECUTION_STARTED,
+        CheckpointBoundary.BEFORE_MODEL_REQUEST,
+        CheckpointBoundary.AFTER_MODEL_RESPONSE,
+        CheckpointBoundary.AFTER_TOOL_RESULT,
+        CheckpointBoundary.BEFORE_COMPLETION,
+    }
 
 
 def test_checkpoint_state_is_serializable_and_preserves_completed_tool_references() -> None:
@@ -102,6 +99,39 @@ def test_checkpoint_state_is_serializable_and_preserves_completed_tool_reference
     assert "secret task" not in str(checkpoint_events)
     assert "private note" not in str(checkpoint_events)
     assert "You are a Kairo agent" not in str(checkpoint_events)
+
+
+def test_recovery_actions_are_explicit() -> None:
+    assert {action.value for action in RecoveryAction} == {"resume", "reconcile"}
+
+
+def test_in_flight_replay_safe_operation_allows_resume() -> None:
+    config = make_config()
+    recorder = CheckpointRecorder(
+        config=config,
+        state=ExecutionState(execution_id=config.execution_id),
+        context=ExecutionContext(),
+        emitter=EventEmitter(
+            execution_id=config.execution_id,
+            correlation_id=config.correlation_id or config.execution_id,
+            sink=InMemoryEventSink(),
+        ),
+    )
+    operation = PendingOperation(
+        operation_id="model:request-1",
+        kind="model_request",
+        reference_id="request-1",
+        status="in_flight",
+        replay_safe=True,
+        reason="provider_request",
+    )
+
+    checkpoint = asyncio.run(
+        recorder.record(CheckpointBoundary.BEFORE_MODEL_REQUEST, pending_operations=[operation])
+    )
+
+    assert checkpoint.metadata.recovery.safe_to_resume is True
+    assert checkpoint.metadata.recovery.action is RecoveryAction.RESUME
 
 
 def test_uncertain_pending_operation_blocks_safe_resume() -> None:

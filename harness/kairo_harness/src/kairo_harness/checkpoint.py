@@ -25,13 +25,9 @@ class CheckpointBoundary(StrEnum):
     BEFORE_COMPLETION = "before_completion"
 
 
-SAFE_CHECKPOINT_BOUNDARIES = frozenset(CheckpointBoundary)
-
-
 class RecoveryAction(StrEnum):
     RESUME = "resume"
     RECONCILE = "reconcile"
-    MANUAL_INTERVENTION = "manual_intervention"
 
 
 class RecoveryInfo(BaseModel):
@@ -177,6 +173,7 @@ class CheckpointRecorder:
                 pending_operations=pending,
             ),
         )
+        execution_state = checkpoint.state.state
         checkpoint.metadata.event_id = await self.emitter.emit(
             EventType.EXECUTION_CHECKPOINTED,
             {
@@ -186,9 +183,9 @@ class CheckpointRecorder:
                 "schemaVersion": checkpoint.metadata.schema_version,
                 "boundary": checkpoint.metadata.boundary.value,
                 "sequence": checkpoint.metadata.sequence,
-                "iteration": checkpoint.state.state.iteration,
-                "modelRequests": checkpoint.state.state.model_requests,
-                "toolCalls": checkpoint.state.state.tool_calls,
+                "iteration": execution_state.iteration,
+                "modelRequests": execution_state.model_requests,
+                "toolCalls": execution_state.tool_calls,
                 "completedToolCallIds": [
                     call.tool_call_id for call in checkpoint.state.completed_tool_calls
                 ],

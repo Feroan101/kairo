@@ -85,6 +85,8 @@ class ExecutionRunner:
         tool_specs = registry_snapshot.specs() if registry_snapshot else config.tools
         self._granted_permissions = frozenset(config.granted_permissions)
         self.validator = ToolCallValidator(tool_specs, self._granted_permissions)
+        if isinstance(self.tool_executor, RegistryToolExecutor):
+            self.tool_executor.bind_validator(self.validator)
         self.state = ExecutionState(execution_id=config.execution_id)
         self.context = ExecutionContext()
         self.context_builder = context_builder or DefaultContextBuilder()

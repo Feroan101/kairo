@@ -13,7 +13,17 @@ type EnvelopeKind = Literal["message-envelope", "event-envelope"]
 
 CONTRACT_SCHEMA_VERSION = "1.0.0"
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
-CONTRACTS_ROOT = Path(__file__).resolve().parents[4] / "packages" / "contracts"
+
+
+def _find_contracts_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        root = candidate / "packages" / "contracts"
+        if (root / "schemas" / "v1").is_dir():
+            return root
+    raise FileNotFoundError("Could not locate packages/contracts from the harness package")
+
+
+CONTRACTS_ROOT = _find_contracts_root(Path(__file__).resolve())
 SCHEMAS_ROOT = CONTRACTS_ROOT / "schemas" / "v1"
 
 

@@ -8,7 +8,7 @@ from typing import Any
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
-from pydantic import AnyHttpUrl, Field, ValidationError
+from pydantic import AnyHttpUrl, Field
 
 from kairo_harness.domain import (
     FinishReason,
@@ -24,7 +24,14 @@ from kairo_harness.domain import (
     usage_delta,
 )
 from kairo_harness.errors import ConfigError, ProviderError
-from kairo_harness.providers.base import ModelProvider, ProviderAdapterConfig
+from kairo_harness.providers.base import (
+    ModelProvider,
+    ProviderAdapterConfig,
+    build_tool_call,
+    nonnegative_counter,
+    require_api_key,
+    require_tool_arguments,
+)
 
 GEMINI_OPTIONS = frozenset({"top_p", "top_k", "presence_penalty", "frequency_penalty", "seed"})
 GEMINI_INCOMPLETE_REASONS = frozenset(
@@ -58,15 +65,7 @@ class GeminiConfig(ProviderAdapterConfig):
     timeout_seconds: float = Field(default=30.0, gt=0, le=300)
 
     def api_key(self, environ: Mapping[str, str] | None = None) -> str:
-        env = os.environ if environ is None else environ
-        api_key = env.get(self.api_key_env)
-        if not api_key:
-            raise ConfigError(
-                "Gemini API key is not configured",
-                code="provider.missing_credentials",
-                details={"provider": "gemini", "envVar": self.api_key_env},
-            )
-        return api_key
+        return require_api_key("Gemini", self.api_key_env, environ)
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> GeminiConfig | None:
@@ -105,7 +104,7 @@ class GeminiProvider(ModelProvider):
         return self.config.capabilities
 
     def capabilities_for(self, model: str) -> ModelCapabilities:
-        return self.config.model_capabilities.get(model, self.config.capabilities)
+        return self.config.capabilities_for(model)
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -314,28 +313,15 @@ class GeminiProvider(ModelProvider):
             function_call = getattr(part, "function_call", None)
             if function_call is None:
                 continue
-            arguments = getattr(function_call, "args", None) or {}
-            if not isinstance(arguments, dict):
-                raise ProviderError(
-                    "Gemini returned tool arguments that were not an object",
-                    code="provider.invalid_tool_arguments",
-                    retryable=False,
+            arguments = require_tool_arguments("Gemini", getattr(function_call, "args", None) or {})
+            calls.append(
+                build_tool_call(
+                    "Gemini",
+                    call_id=getattr(function_call, "id", None) or str(uuid.uuid4()),
+                    name=getattr(function_call, "name", None),
+                    arguments=arguments,
                 )
-            try:
-                calls.append(
-                    ToolCallRequest(
-                        id=getattr(function_call, "id", None) or str(uuid.uuid4()),
-                        name=getattr(function_call, "name", None),
-                        arguments=arguments,
-                    )
-                )
-            except ValidationError as error:
-                raise ProviderError(
-                    "Gemini returned an invalid tool call",
-                    code="provider.invalid_tool_call",
-                    retryable=False,
-                    details={"issueCount": len(error.errors())},
-                ) from error
+            )
         return calls
 
     @staticmethod
@@ -362,17 +348,10 @@ class GeminiProvider(ModelProvider):
         if metadata is None:
             return Usage()
         return Usage(
-            input_tokens=GeminiProvider._counter(metadata, "prompt_token_count"),
-            output_tokens=GeminiProvider._counter(metadata, "candidates_token_count"),
-            total_tokens=GeminiProvider._counter(metadata, "total_token_count"),
+            input_tokens=nonnegative_counter(metadata, "prompt_token_count"),
+            output_tokens=nonnegative_counter(metadata, "candidates_token_count"),
+            total_tokens=nonnegative_counter(metadata, "total_token_count"),
         )
-
-    @staticmethod
-    def _counter(value: Any, field: str) -> int | None:
-        counter = getattr(value, field, None)
-        if isinstance(counter, bool) or not isinstance(counter, int) or counter < 0:
-            return None
-        return counter
 
     @staticmethod
     def _finish_reason(response: Any, has_tool_calls: bool) -> FinishReason | None:

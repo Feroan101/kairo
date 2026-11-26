@@ -1,11 +1,12 @@
 import json
-from pathlib import Path
 from typing import Any
 
 import pytest
 from kairo_harness.contracts import (
     CONTRACT_SCHEMA_VERSION,
+    CONTRACTS_ROOT,
     JSON_SCHEMA_DIALECT,
+    SCHEMAS_ROOT,
     VALIDATORS,
     ContractValidationError,
     to_event_envelope,
@@ -13,7 +14,7 @@ from kairo_harness.contracts import (
     validate_envelope,
 )
 
-FIXTURES_ROOT = Path(__file__).resolve().parents[3] / "packages" / "contracts" / "fixtures" / "v1"
+FIXTURES_ROOT = CONTRACTS_ROOT / "fixtures" / "v1"
 
 FIXTURE_FILES = [
     ("message-envelope", "message-envelope.json"),
@@ -27,6 +28,13 @@ def load_fixtures(filename: str) -> dict[str, Any]:
     if not isinstance(fixtures, dict):
         raise TypeError(f"{filename} must contain a JSON object")
     return fixtures
+
+
+def test_contract_paths_point_at_versioned_contract_files() -> None:
+    assert (SCHEMAS_ROOT / "message-envelope.schema.json").is_file()
+    assert (SCHEMAS_ROOT / "event-envelope.schema.json").is_file()
+    assert (FIXTURES_ROOT / "message-envelope.json").is_file()
+    assert (FIXTURES_ROOT / "event-envelope.json").is_file()
 
 
 def test_schemas_use_json_schema_draft_2020_12() -> None:

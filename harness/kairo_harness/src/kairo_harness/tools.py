@@ -186,6 +186,9 @@ class RegistryToolExecutor(ToolExecutor):
         self.snapshot = registry.snapshot() if isinstance(registry, ToolRegistry) else registry
         self._validator = ToolCallValidator(self.snapshot, granted_permissions)
 
+    def bind_validator(self, validator: ToolCallValidator) -> None:
+        self._validator = validator
+
     async def execute(self, call: ToolCallRequest, spec: ToolSpec) -> ToolResult:
         try:
             self._validator.validate(call)

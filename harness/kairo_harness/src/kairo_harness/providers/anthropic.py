@@ -4,7 +4,6 @@ import os
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
-import httpx
 from anthropic import (
     APIConnectionError,
     APIError,
@@ -14,7 +13,7 @@ from anthropic import (
     AuthenticationError,
     RateLimitError,
 )
-from pydantic import AnyHttpUrl, Field, ValidationError
+from pydantic import AnyHttpUrl, Field
 
 from kairo_harness.domain import (
     FinishReason,
@@ -31,7 +30,16 @@ from kairo_harness.domain import (
     usage_delta,
 )
 from kairo_harness.errors import ConfigError, ProviderError
-from kairo_harness.providers.base import ModelProvider, ProviderAdapterConfig
+from kairo_harness.providers.base import (
+    ModelProvider,
+    ProviderAdapterConfig,
+    build_tool_call,
+    nonnegative_counter,
+    require_api_key,
+    require_tool_arguments,
+    resolve_api_key_env,
+    translate_sdk_error,
+)
 
 ANTHROPIC_OPTIONS = frozenset({"top_p", "top_k"})
 
@@ -44,20 +52,12 @@ class AnthropicConfig(ProviderAdapterConfig):
     default_max_tokens: int = Field(default=1024, gt=0, le=200_000)
 
     def api_key(self, environ: Mapping[str, str] | None = None) -> str:
-        env = os.environ if environ is None else environ
-        api_key = env.get(self.api_key_env)
-        if not api_key:
-            raise ConfigError(
-                "Anthropic API key is not configured",
-                code="provider.missing_credentials",
-                details={"provider": "anthropic", "envVar": self.api_key_env},
-            )
-        return api_key
+        return require_api_key("Anthropic", self.api_key_env, environ)
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> AnthropicConfig | None:
         env = os.environ if environ is None else environ
-        api_key_env = env.get("KAIRO_ANTHROPIC_API_KEY_ENV", "ANTHROPIC_API_KEY")
+        api_key_env = resolve_api_key_env(env, "KAIRO_ANTHROPIC_API_KEY_ENV", "ANTHROPIC_API_KEY")
         if not env.get(api_key_env):
             return None
         base_url = env.get("KAIRO_ANTHROPIC_BASE_URL")
@@ -91,7 +91,7 @@ class AnthropicProvider(ModelProvider):
         return self.config.capabilities
 
     def capabilities_for(self, model: str) -> ModelCapabilities:
-        return self.config.model_capabilities.get(model, self.config.capabilities)
+        return self.config.capabilities_for(model)
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -323,35 +323,24 @@ class AnthropicProvider(ModelProvider):
 
     @staticmethod
     def _tool_call(block: Any) -> list[ToolCallRequest]:
-        arguments = getattr(block, "input", None)
-        if not isinstance(arguments, dict):
-            raise ProviderError(
-                "Anthropic returned tool input that was not an object",
-                code="provider.invalid_tool_arguments",
-                retryable=False,
+        arguments = require_tool_arguments(
+            "Anthropic", getattr(block, "input", None), subject="tool input"
+        )
+        return [
+            build_tool_call(
+                "Anthropic",
+                call_id=getattr(block, "id", None),
+                name=getattr(block, "name", None),
+                arguments=arguments,
             )
-        try:
-            return [
-                ToolCallRequest(
-                    id=getattr(block, "id", None),
-                    name=getattr(block, "name", None),
-                    arguments=arguments,
-                )
-            ]
-        except ValidationError as error:
-            raise ProviderError(
-                "Anthropic returned an invalid tool call",
-                code="provider.invalid_tool_call",
-                retryable=False,
-                details={"issueCount": len(error.errors())},
-            ) from error
+        ]
 
     @staticmethod
     def _usage(value: Any) -> Usage:
         if value is None:
             return Usage()
-        input_tokens = AnthropicProvider._counter(value, "input_tokens")
-        output_tokens = AnthropicProvider._counter(value, "output_tokens")
+        input_tokens = nonnegative_counter(value, "input_tokens")
+        output_tokens = nonnegative_counter(value, "output_tokens")
         total = None
         if input_tokens is not None and output_tokens is not None:
             total = input_tokens + output_tokens
@@ -364,13 +353,6 @@ class AnthropicProvider(ModelProvider):
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
         )
-
-    @staticmethod
-    def _counter(value: Any, field: str) -> int | None:
-        counter = getattr(value, field, None)
-        if isinstance(counter, bool) or not isinstance(counter, int) or counter < 0:
-            return None
-        return counter
 
     @staticmethod
     def _finish_reason(
@@ -400,76 +382,14 @@ class AnthropicProvider(ModelProvider):
 
     @staticmethod
     def _translate_error(error: Exception, operation: str) -> ProviderError:
-        details: dict[str, str | int | float | bool] = {"operation": operation}
-        if isinstance(error, AuthenticationError):
-            return ProviderError(
-                "Anthropic authentication failed",
-                code="provider.auth",
-                retryable=False,
-                details=details,
-            )
-        if isinstance(error, RateLimitError):
-            return ProviderError(
-                "Anthropic rate limit reached",
-                code="provider.rate_limited",
-                retryable=True,
-                details=details,
-            )
-        if isinstance(error, APITimeoutError):
-            return ProviderError(
-                "Anthropic request timed out",
-                code="provider.timeout",
-                retryable=True,
-                details=details,
-            )
-        if isinstance(error, APIConnectionError):
-            return ProviderError(
-                "Could not connect to Anthropic",
-                code="provider.connection",
-                retryable=True,
-                details=details,
-            )
-        if isinstance(error, APIResponseValidationError):
-            return ProviderError(
-                "Anthropic returned an invalid response",
-                code="provider.invalid_response",
-                retryable=False,
-                details=details,
-            )
-        status = getattr(error, "status_code", None)
-        if isinstance(status, int):
-            details["statusCode"] = status
-        if isinstance(error, APIError):
-            return ProviderError(
-                "Anthropic returned an API error",
-                code=f"provider.http_{status}" if isinstance(status, int) else "provider.api_error",
-                retryable=status == 429 or isinstance(status, int) and status >= 500,
-                details=details,
-            )
-        if isinstance(error, httpx.TimeoutException):
-            return ProviderError(
-                "Anthropic request timed out",
-                code="provider.timeout",
-                retryable=True,
-                details=details,
-            )
-        if isinstance(error, httpx.ConnectError):
-            return ProviderError(
-                "Could not connect to Anthropic",
-                code="provider.connection",
-                retryable=True,
-                details=details,
-            )
-        if isinstance(error, httpx.HTTPError):
-            return ProviderError(
-                "Anthropic HTTP request failed",
-                code="provider.http_error",
-                retryable=False,
-                details=details,
-            )
-        return ProviderError(
-            "Anthropic provider raised an unexpected error",
-            code="provider.unexpected",
-            retryable=False,
-            details={"operation": operation, "errorType": type(error).__name__},
+        return translate_sdk_error(
+            error,
+            operation=operation,
+            provider_label="Anthropic",
+            authentication_error=AuthenticationError,
+            rate_limit_error=RateLimitError,
+            timeout_error=APITimeoutError,
+            connection_error=APIConnectionError,
+            response_validation_error=APIResponseValidationError,
+            api_error=APIError,
         )
