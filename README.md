@@ -109,9 +109,9 @@ pnpm --filter @kairo/control-plane db:check
 
 Database integration tests require `TEST_DATABASE_URL` and a role with `CREATEDB`. The tests create and drop disposable databases and do not use the persistent development volume.
 
-## Control-plane identity API
+## Control-plane API
 
-After migrating, `pnpm --filter @kairo/control-plane start` serves the identity and access API. Users register at `POST /v1/auth/register`, authenticate at `POST /v1/auth/login`, and use the returned bearer token for protected routes. Organizations are created at `POST /v1/organizations`; membership roles are owner, admin, and member. `GET /openapi.json` exposes the generated API contract, and `GET /health` checks the database connection. See `apps/control-plane/README.md` for the full route list.
+After migrating, `pnpm --filter @kairo/control-plane start` serves the identity, access, and agent management API. Users register at `POST /v1/auth/register`, authenticate at `POST /v1/auth/login`, and use the returned bearer token for protected routes. Organizations are created at `POST /v1/organizations`; membership roles are owner, admin, and member. Agents are created and configured under `/v1/organizations/:organizationId/agents` with model, harness, tool permission, execution policy, and memory scope settings; credentials are never stored in agent configuration. `GET /openapi.json` exposes the generated API contract, and `GET /health` checks the database connection. See `apps/control-plane/README.md` for the full route list.
 
 ## Resetting local data
 

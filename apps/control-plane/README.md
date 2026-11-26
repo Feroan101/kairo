@@ -23,6 +23,17 @@ Identity and access routes:
 | `POST` | `/v1/organizations/:organizationId/members` | organization admin |
 | `PATCH` / `DELETE` | `/v1/organizations/:organizationId/members/:userId` | organization admin |
 
+Agent management routes:
+
+| Method | Path | Access |
+| --- | --- | --- |
+| `POST` | `/v1/organizations/:organizationId/agents` | organization member |
+| `GET` | `/v1/organizations/:organizationId/agents` | organization member |
+| `GET` | `/v1/organizations/:organizationId/agents/:agentId` | organization member |
+| `PATCH` | `/v1/organizations/:organizationId/agents/:agentId` | agent creator or organization admin |
+| `PATCH` | `/v1/organizations/:organizationId/agents/:agentId/status` | agent creator or organization admin |
+| `DELETE` | `/v1/organizations/:organizationId/agents/:agentId` | agent creator or organization admin |
+
 Authenticated routes use `Authorization: Bearer <token>`. Passwords are hashed with scrypt, session tokens are stored only as SHA-256 hashes, and authorization failures are denied by default. The last owner of an organization cannot be demoted or removed. `GET /health` and `GET /openapi.json` are public.
 
 ## Database foundation
@@ -33,7 +44,9 @@ The database layer lives in `src/db`:
 - `config.ts` — database environment variable validation using TypeBox.
 - `client.ts` — reusable, closable Drizzle/postgres.js connection factory and connection check.
 
-The HTTP layer lives in `src/app.ts`, `src/server.ts`, `src/errors.ts`, and `src/identity/`. Fastify plugins, TypeBox schemas, and generated OpenAPI keep request validation, error responses, and organization boundaries in one module.
+The HTTP layer lives in `src/app.ts`, `src/server.ts`, `src/errors.ts`, `src/identity/`, and `src/agents/`. Fastify plugins, TypeBox schemas, and generated OpenAPI keep request validation, error responses, and organization boundaries in one module.
+
+Agent configurations store provider and model identifiers, harness version, model settings, tool permissions, granted permissions, execution policies, and memory scope. Credentials are never part of agent configuration; secret-shaped keys are rejected by API validation and the PostgreSQL configuration constraint. `DELETE` archives an agent instead of removing its durable identity.
 
 `DATABASE_SCHEMA` is optional. When set, the connection uses it as the first entry in PostgreSQL's `search_path`.
 

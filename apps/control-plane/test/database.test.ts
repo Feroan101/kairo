@@ -283,7 +283,7 @@ describe("PostgreSQL database foundation", () => {
       modelProvider: "openai",
       model: "gpt-5",
       harnessVersion: "0.1.0",
-      tools: ["filesystem.read"],
+      tools: [{ name: "filesystem.read", allowed: true, permissions: ["filesystem.read"] }],
     };
     const [updatedAgent] = await database()
       .update(agents)

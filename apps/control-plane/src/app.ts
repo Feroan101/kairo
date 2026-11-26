@@ -1,6 +1,7 @@
 import swagger from "@fastify/swagger";
 import { Type } from "@sinclair/typebox";
 import Fastify, { type FastifyInstance } from "fastify";
+import { agentRoutes } from "./agents/routes.ts";
 import { loadServerConfig, type ServerConfig } from "./config.ts";
 import { checkDatabaseConnection, type Database } from "./db/client.ts";
 import { registerErrorHandling } from "./errors.ts";
@@ -20,6 +21,7 @@ export async function createApp(
   const serverConfig = options.serverConfig ?? loadServerConfig();
   const app = Fastify({
     bodyLimit: 16 * 1024,
+    ajv: { customOptions: { removeAdditional: false } },
     logger:
       options.logger === false
         ? false
@@ -72,6 +74,7 @@ export async function createApp(
 
   await app.register(authRoutes, { database, serverConfig });
   await app.register(organizationRoutes, { database });
+  await app.register(agentRoutes, { database });
 
   return app;
 }
