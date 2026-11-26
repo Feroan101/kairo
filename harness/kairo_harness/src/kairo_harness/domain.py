@@ -53,6 +53,14 @@ class Usage(BaseModel):
     total_tokens: int | None = Field(default=None, ge=0)
 
 
+class ToolCallRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=64)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 class ModelMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -60,6 +68,7 @@ class ModelMessage(BaseModel):
     content: str
     tool_call_id: str | None = None
     tool_name: str | None = None
+    tool_calls: list[ToolCallRequest] = Field(default_factory=list)
 
 
 class ToolSpec(BaseModel):
@@ -82,14 +91,6 @@ class ToolSpec(BaseModel):
         if self.input_schema.get("type") != "object":
             raise ValueError("tool input_schema must describe an object")
         return self
-
-
-class ToolCallRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(min_length=1, max_length=200)
-    name: str = Field(min_length=1, max_length=64)
-    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolCallDelta(BaseModel):
@@ -377,6 +378,28 @@ def _accumulate_tool_calls(chunks: Sequence[ModelStreamChunk]) -> list[ToolCallR
         seen_ids.add(call.id)
         calls.append(call)
     return calls
+
+
+def _counter_delta(current: int | None, previous: int | None) -> int | None:
+    if current is None:
+        return None
+    if previous is None or current < previous:
+        return current
+    return current - previous
+
+
+def usage_delta(current: Usage, previous: Usage) -> Usage:
+    input_delta = _counter_delta(current.input_tokens, previous.input_tokens)
+    output_delta = _counter_delta(current.output_tokens, previous.output_tokens)
+    if input_delta is None or output_delta is None:
+        total_delta = _counter_delta(current.total_tokens, previous.total_tokens)
+    else:
+        total_delta = input_delta + output_delta
+    return Usage(
+        input_tokens=input_delta,
+        output_tokens=output_delta,
+        total_tokens=total_delta,
+    )
 
 
 def _aggregate_usage(chunks: Sequence[ModelStreamChunk]) -> Usage:

@@ -10,11 +10,26 @@ from kairo_harness.domain import (
 )
 from kairo_harness.events import EventSink, InMemoryEventSink
 from kairo_harness.execution import ExecutionRunner
-from kairo_harness.providers import MockProvider, ModelProvider, OllamaConfig, OllamaProvider
+from kairo_harness.providers import (
+    AnthropicConfig,
+    AnthropicProvider,
+    GeminiConfig,
+    GeminiProvider,
+    MockProvider,
+    ModelProvider,
+    OllamaConfig,
+    OllamaProvider,
+    OpenAIConfig,
+    OpenAIProvider,
+    ProviderRegistry,
+    ProviderSettings,
+)
 from kairo_harness.state import ExecutionResult, ExecutionState, ExecutionStatus
 from kairo_harness.tools import RegistryToolExecutor, Tool, ToolRegistry, ToolRegistrySnapshot
 
 __all__ = [
+    "AnthropicConfig",
+    "AnthropicProvider",
     "EventSink",
     "ExecutionConfig",
     "ExecutionResult",
@@ -22,6 +37,8 @@ __all__ = [
     "ExecutionState",
     "ExecutionStatus",
     "FinishReason",
+    "GeminiConfig",
+    "GeminiProvider",
     "InMemoryEventSink",
     "MockProvider",
     "ModelConfig",
@@ -29,6 +46,10 @@ __all__ = [
     "ModelStreamChunk",
     "OllamaConfig",
     "OllamaProvider",
+    "OpenAIConfig",
+    "OpenAIProvider",
+    "ProviderRegistry",
+    "ProviderSettings",
     "RegistryToolExecutor",
     "Tool",
     "ToolCallDelta",

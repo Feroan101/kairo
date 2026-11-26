@@ -64,6 +64,13 @@ Edit `.env` before starting infrastructure. `.env` is ignored by Git; never comm
 | `DATABASE_URL` | Control plane connection string | matches the defaults above |
 | `TEST_DATABASE_URL` | Integration test connection string | matches the defaults above |
 | `DATABASE_SCHEMA` | Optional runtime search path | unset |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Gemini credential; `GOOGLE_API_KEY` is the fallback | unset |
+| `ANTHROPIC_API_KEY` | Claude credential | unset |
+| `OPENAI_API_KEY` | OpenAI credential | unset |
+| `OPENAI_ORGANIZATION` | Optional OpenAI organization | unset |
+| `KAIRO_GEMINI_API_KEY_ENV`, `KAIRO_ANTHROPIC_API_KEY_ENV`, `KAIRO_OPENAI_API_KEY_ENV` | Override the environment variable name that holds a provider key | provider default |
+| `KAIRO_GEMINI_BASE_URL`, `KAIRO_ANTHROPIC_BASE_URL`, `KAIRO_OPENAI_BASE_URL`, `KAIRO_OLLAMA_BASE_URL` | Provider endpoints used by direct provider adapters | provider default or local Ollama |
+| `KAIRO_*_TIMEOUT_SECONDS`, `KAIRO_ANTHROPIC_MAX_TOKENS` | Provider request settings | 30 seconds, 1024 tokens |
 
 Compose binds PostgreSQL only to `127.0.0.1`. If you change `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, or `POSTGRES_PORT`, update `DATABASE_URL` and `TEST_DATABASE_URL` to match.
 
@@ -117,6 +124,10 @@ The Python harness in `harness/kairo_harness` is independent of the control plan
 ```sh
 pnpm run test:python
 ```
+
+Provider adapters use the official SDKs for Gemini, Claude, and OpenAI, and a direct HTTP adapter for Ollama. `ProviderSettings.from_env()` enables only providers whose credentials or endpoints are present. `ModelConfig` selects the provider and model; API keys stay in the environment and are never stored in model or agent configuration.
+
+Every adapter normalizes responses, native tool calls, tool results, token usage, finish reasons, model discovery, and retry-classified errors. Capability validation happens before a provider request, so unsupported streaming or tool use fails explicitly instead of producing a provider-specific error.
 
 To exercise a real local model manually, set an Ollama endpoint that is reachable from the process running the harness and run the smoke script:
 

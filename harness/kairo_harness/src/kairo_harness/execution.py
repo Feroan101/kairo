@@ -192,6 +192,11 @@ class ExecutionRunner:
             temperature=self.config.model.temperature,
             max_tokens=self.config.model.max_tokens,
         )
+        self.provider.require_capabilities(
+            request.model,
+            streaming=self.config.model.stream_responses,
+            tool_calls=bool(request.tools),
+        )
         request_event_id = await self.emitter.emit(
             EventType.MODEL_REQUESTED,
             {
@@ -256,7 +261,13 @@ class ExecutionRunner:
             )
             raise
 
-        self.context.add(ModelMessage(role=ModelRole.ASSISTANT, content=response.content))
+        self.context.add(
+            ModelMessage(
+                role=ModelRole.ASSISTANT,
+                content=response.content,
+                tool_calls=[call.model_copy(deep=True) for call in response.tool_calls],
+            )
+        )
         self._last_model_response_event_id = await self.emitter.emit(
             EventType.MODEL_RESPONDED,
             {
