@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AgentConfiguration } from "../src/db/agent-configuration.ts";
-import { agents, organizationMemberships, organizations, users } from "../src/db/schema.ts";
+import {
+  agents,
+  auditEvents,
+  organizationMemberships,
+  organizations,
+  sessions,
+  users,
+} from "../src/db/schema.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/database.ts";
 
 let testDatabase: TestDatabase | undefined;
@@ -106,8 +113,10 @@ describe("PostgreSQL database foundation", () => {
     `);
     expect(tables.map((row) => row.table_name)).toEqual([
       "agents",
+      "audit_events",
       "organization_memberships",
       "organizations",
+      "sessions",
       "users",
     ]);
 
@@ -194,6 +203,39 @@ describe("PostgreSQL database foundation", () => {
         }),
       "23514",
     );
+  });
+
+  it("stores sessions and append-oriented audit events", async () => {
+    const user = await insertUser("Session User");
+    const tokenHash = "a".repeat(64);
+    const [session] = await database()
+      .insert(sessions)
+      .values({ userId: user.id, tokenHash, expiresAt: new Date(Date.now() + 60_000) })
+      .returning();
+
+    expect(session?.userId).toBe(user.id);
+    await expectPostgresError(
+      database()
+        .insert(sessions)
+        .values({ userId: user.id, tokenHash, expiresAt: new Date(Date.now() + 60_000) }),
+      "23505",
+    );
+    await expectPostgresError(
+      database()
+        .insert(sessions)
+        .values({
+          userId: user.id,
+          tokenHash: "invalid",
+          expiresAt: new Date(Date.now() + 60_000),
+        }),
+      "23514",
+    );
+
+    const [event] = await database()
+      .insert(auditEvents)
+      .values({ action: "auth.logged_in", actorUserId: user.id })
+      .returning();
+    expect(event?.action).toBe("auth.logged_in");
   });
 
   it("relates agents to their organization and creator", async () => {
