@@ -125,19 +125,85 @@ The Python harness in `harness/kairo_harness` is independent of the control plan
 pnpm run test:python
 ```
 
+### Standalone execution interface
+
+`StandaloneHarness` is the lightweight caller-facing interface. It accepts an `ExecutionConfig`, an explicit provider or provider registry, optional tools, and an optional `EventSink`. `run()` returns a `StandaloneRunResult` containing the `ExecutionResult`, structured events, and convenience access to status, output, errors, and usage. Cancellation is returned as a `cancelled` result; timeouts and failures remain explicit `failed` results with their terminal reason and error information.
+
+```python
+import asyncio
+import uuid
+
+from kairo_harness import ExecutionConfig, ModelConfig, StandaloneHarness
+from kairo_harness.providers.mock import MockProvider
+from kairo_harness.domain import ModelResponse
+
+config = ExecutionConfig(
+    agent_id="local-agent",
+    execution_id=uuid.uuid4(),
+    task="Confirm that the harness is running.",
+    model=ModelConfig(provider="mock", model="mock-model"),
+)
+
+async def main() -> None:
+    provider = MockProvider([ModelResponse(content="Kairo harness is ready.")])
+    async with StandaloneHarness(provider=provider) as harness:
+        run = await harness.run(config)
+        print(run.status.value, run.output, run.usage.total_tokens)
+        for event in run.events:
+            print(event.type)
+
+asyncio.run(main())
+```
+
+The equivalent command-line interface requires no control-plane or worker process:
+
+```sh
+uv run --project harness/kairo_harness python -m kairo_harness \
+  --provider mock \
+  --task "Confirm that the harness is running."
+
+uv run --project harness/kairo_harness python -m kairo_harness \
+  --provider ollama \
+  --model gemma3:270m \
+  --task "Summarize what you can do." \
+  --events
+```
+
+The CLI uses `ProviderSettings.from_env()` for Gemini, Anthropic, OpenAI, and Ollama. `--provider mock` runs the built-in deterministic provider without credentials. `--events` prints the same versioned event envelopes exposed through the Python result. Structured events are redacted before emission and never include hidden model reasoning.
+
 Provider adapters use the official SDKs for Gemini, Claude, and OpenAI, and a direct HTTP adapter for Ollama. `ProviderSettings.from_env()` enables only providers whose credentials or endpoints are present. `ModelConfig` selects the provider and model; API keys stay in the environment and are never stored in model or agent configuration.
 
 Every adapter normalizes responses, native tool calls, tool results, token usage, finish reasons, model discovery, and retry-classified errors. Capability validation happens before a provider request, so unsupported streaming or tool use fails explicitly instead of producing a provider-specific error.
 
-To exercise a real local model manually, set an Ollama endpoint that is reachable from the process running the harness and run the smoke script:
+### Local and container execution
+
+To exercise a real local model manually, keep using the existing smoke script, or use the CLI entrypoint with the same reachable Ollama endpoint:
 
 ```sh
 KAIRO_OLLAMA_BASE_URL=http://127.0.0.1:11434 \
 KAIRO_OLLAMA_MODEL=gemma3:270m \
 uv run --project harness/kairo_harness python harness/kairo_harness/scripts/ollama_smoke.py
+
+KAIRO_OLLAMA_BASE_URL=http://127.0.0.1:11434 \
+uv run --project harness/kairo_harness python -m kairo_harness \
+  --provider ollama --model gemma3:270m --task "Reply with a short confirmation."
 ```
 
-`localhost` is only correct when the harness itself runs on the machine hosting Ollama. In a container or distributed deployment, configure a reachable host or gateway endpoint.
+The lightweight base image is defined in `runtime/base/Dockerfile`. It installs only the harness runtime and shared contract schemas, runs as a non-root user, and has no credentials or worker services baked into the image:
+
+```sh
+docker build -f runtime/base/Dockerfile -t kairo-harness:local .
+
+docker run --rm kairo-harness:local \
+  --provider mock --task "Confirm that the harness is running."
+
+docker run --rm \
+  -e KAIRO_OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  kairo-harness:local \
+  --provider ollama --model gemma3:270m --task "Reply with a short confirmation."
+```
+
+`localhost` is only correct when the harness itself runs on the machine hosting Ollama. In a container or distributed deployment, configure a reachable host or gateway endpoint. Runtime resource limits, network policy, and workspace mounts remain the responsibility of the future execution runtime; this image only provides the standalone harness entrypoint.
 
 Model tool decisions must be native provider tool calls or the strictly validated JSON action format `{"type":"tool_call","tool_calls":[...]}`. Plain text is treated only as a final answer and is never executed.
 

@@ -53,6 +53,7 @@ from kairo_harness.providers import (
     ProviderRegistry,
     ProviderSettings,
 )
+from kairo_harness.standalone import StandaloneHarness, StandaloneRunResult
 from kairo_harness.state import ExecutionResult, ExecutionState, ExecutionStatus
 from kairo_harness.tools import RegistryToolExecutor, Tool, ToolRegistry, ToolRegistrySnapshot
 
@@ -100,6 +101,8 @@ __all__ = [
     "RecoveryInfo",
     "RegistryToolExecutor",
     "SharedTeamMemory",
+    "StandaloneHarness",
+    "StandaloneRunResult",
     "TeamMemory",
     "TeamMemoryQuery",
     "TeamMemoryUpdate",
