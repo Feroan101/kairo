@@ -53,6 +53,14 @@ class Usage(BaseModel):
     total_tokens: int | None = Field(default=None, ge=0)
 
 
+class ToolCallRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=64)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 class ModelMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -60,6 +68,7 @@ class ModelMessage(BaseModel):
     content: str
     tool_call_id: str | None = None
     tool_name: str | None = None
+    tool_calls: list[ToolCallRequest] = Field(default_factory=list)
 
 
 class ToolSpec(BaseModel):
@@ -82,14 +91,6 @@ class ToolSpec(BaseModel):
         if self.input_schema.get("type") != "object":
             raise ValueError("tool input_schema must describe an object")
         return self
-
-
-class ToolCallRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(min_length=1, max_length=200)
-    name: str = Field(min_length=1, max_length=64)
-    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolCallDelta(BaseModel):
@@ -186,7 +187,10 @@ class ModelStreamChunk(BaseModel):
 
     content_delta: str = ""
     tool_calls: list[ToolCallDelta | ToolCallRequest] = Field(default_factory=list)
-    usage: Usage = Field(default_factory=Usage)
+    usage: Usage = Field(
+        default_factory=Usage,
+        description="Per-chunk usage delta; providers normalize cumulative counters.",
+    )
     done: bool = False
     finish_reason: FinishReason | None = None
 
@@ -376,20 +380,53 @@ def _accumulate_tool_calls(chunks: Sequence[ModelStreamChunk]) -> list[ToolCallR
     return calls
 
 
+def _counter_delta(current: int | None, previous: int | None) -> int | None:
+    if current is None:
+        return None
+    if previous is None or current < previous:
+        return current
+    return current - previous
+
+
+def usage_delta(current: Usage, previous: Usage) -> Usage:
+    input_delta = _counter_delta(current.input_tokens, previous.input_tokens)
+    output_delta = _counter_delta(current.output_tokens, previous.output_tokens)
+    if input_delta is None or output_delta is None:
+        total_delta = _counter_delta(current.total_tokens, previous.total_tokens)
+    else:
+        total_delta = input_delta + output_delta
+    return Usage(
+        input_tokens=input_delta,
+        output_tokens=output_delta,
+        total_tokens=total_delta,
+    )
+
+
 def _aggregate_usage(chunks: Sequence[ModelStreamChunk]) -> Usage:
     usage = Usage()
     for chunk in chunks:
-        for field_name in ("input_tokens", "output_tokens", "total_tokens"):
-            incoming = getattr(chunk.usage, field_name)
+        total_tokens = chunk.usage.total_tokens
+        if (
+            total_tokens is None
+            and chunk.usage.input_tokens is not None
+            and chunk.usage.output_tokens is not None
+        ):
+            total_tokens = chunk.usage.input_tokens + chunk.usage.output_tokens
+        for field_name, incoming in (
+            ("input_tokens", chunk.usage.input_tokens),
+            ("output_tokens", chunk.usage.output_tokens),
+            ("total_tokens", total_tokens),
+        ):
             if incoming is None:
                 continue
             current = getattr(usage, field_name)
-            if current is None or incoming > current:
-                setattr(usage, field_name, incoming)
-    if usage.total_tokens is None and (
-        usage.input_tokens is not None or usage.output_tokens is not None
+            setattr(usage, field_name, incoming if current is None else current + incoming)
+    if (
+        usage.total_tokens is None
+        and usage.input_tokens is not None
+        and usage.output_tokens is not None
     ):
-        usage.total_tokens = (usage.input_tokens or 0) + (usage.output_tokens or 0)
+        usage.total_tokens = usage.input_tokens + usage.output_tokens
     return usage
 
 

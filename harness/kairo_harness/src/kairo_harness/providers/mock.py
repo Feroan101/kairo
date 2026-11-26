@@ -38,6 +38,10 @@ class MockProvider(ModelProvider):
     def name(self) -> str:
         return "mock"
 
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return ModelCapabilities(streaming=True, tool_calls=True)
+
     async def list_models(self) -> list[ModelDescriptor]:
         return [model.model_copy(deep=True) for model in self._models]
 

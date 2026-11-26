@@ -40,14 +40,16 @@ def make_config(
     execution_id: UUID | None = None,
     granted_permissions: frozenset[str] = frozenset(),
     stream_responses: bool = False,
+    provider: str = "mock",
+    model: str = "mock-model",
 ) -> ExecutionConfig:
     return ExecutionConfig(
         agent_id="agent-1",
         execution_id=execution_id or uuid4(),
         task=task,
         model=ModelConfig(
-            provider="mock",
-            model="mock-model",
+            provider=provider,
+            model=model,
             timeout_seconds=1.0,
             stream_responses=stream_responses,
         ),

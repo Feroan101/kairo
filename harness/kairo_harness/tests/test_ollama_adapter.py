@@ -8,7 +8,9 @@ from kairo_harness.domain import (
     FinishReason,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     ModelRole,
+    Usage,
     aggregate_stream_chunks,
 )
 from kairo_harness.errors import ProviderError
@@ -138,6 +140,80 @@ def test_stream_parses_ndjson_chunks() -> None:
     asyncio.run(scenario())
 
 
+def test_stream_normalizes_cumulative_usage_to_deltas() -> None:
+    payloads = [
+        {
+            "message": {"content": "he"},
+            "prompt_eval_count": 5,
+            "eval_count": 2,
+            "done": False,
+        },
+        {
+            "message": {"content": "llo"},
+            "prompt_eval_count": 5,
+            "eval_count": 4,
+            "done": False,
+        },
+        {
+            "message": {"content": ""},
+            "prompt_eval_count": 5,
+            "eval_count": 6,
+            "done": True,
+            "done_reason": "stop",
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="\n".join(json.dumps(item) for item in payloads))
+
+    provider, client = provider_for(handler)
+
+    async def scenario() -> tuple[list[Usage], Usage]:
+        async with client:
+            chunks = [chunk async for chunk in provider.stream(make_request())]
+            return [chunk.usage for chunk in chunks], aggregate_stream_chunks(chunks).usage
+
+    chunk_usage, aggregated_usage = asyncio.run(scenario())
+
+    assert chunk_usage == [
+        Usage(input_tokens=5, output_tokens=2, total_tokens=7),
+        Usage(input_tokens=0, output_tokens=2, total_tokens=2),
+        Usage(input_tokens=0, output_tokens=2, total_tokens=2),
+    ]
+    assert aggregated_usage == Usage(input_tokens=5, output_tokens=6, total_tokens=11)
+
+
+def test_stream_derives_total_from_sparse_cumulative_usage() -> None:
+    payloads = [
+        {
+            "message": {"content": "he"},
+            "prompt_eval_count": 5,
+            "done": False,
+        },
+        {
+            "message": {"content": "llo"},
+            "eval_count": 6,
+            "done": True,
+            "done_reason": "stop",
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="\n".join(json.dumps(item) for item in payloads))
+
+    provider, client = provider_for(handler)
+
+    async def scenario() -> tuple[list[Usage], Usage]:
+        async with client:
+            chunks = [chunk async for chunk in provider.stream(make_request())]
+            return [chunk.usage for chunk in chunks], aggregate_stream_chunks(chunks).usage
+
+    chunk_usage, aggregated_usage = asyncio.run(scenario())
+
+    assert chunk_usage == [Usage(input_tokens=5), Usage(output_tokens=6)]
+    assert aggregated_usage == Usage(input_tokens=5, output_tokens=6, total_tokens=11)
+
+
 def test_stream_reconstructs_native_tool_calls_and_finish_reason() -> None:
     first = {
         "message": {
@@ -181,6 +257,54 @@ def test_stream_reconstructs_native_tool_calls_and_finish_reason() -> None:
             assert aggregated.tool_calls[0].arguments == {"value": "hi"}
 
     asyncio.run(scenario())
+
+
+def test_stream_reconstructs_tool_call_fragments_without_repeated_ids() -> None:
+    first = {
+        "message": {
+            "tool_calls": [
+                {
+                    "id": "call-a",
+                    "function": {"name": "echo", "arguments": '{"value":'},
+                },
+                {
+                    "id": "call-b",
+                    "function": {"name": "sum", "arguments": '{"value":'},
+                },
+            ]
+        },
+        "done": False,
+    }
+    second = {
+        "message": {
+            "tool_calls": [
+                {"function": {"name": "echo", "arguments": '"a"}'}},
+                {"function": {"name": "sum", "arguments": '"b"}'}},
+            ]
+        },
+        "done": True,
+        "done_reason": "stop",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["stream"] is True
+        return httpx.Response(200, text="\n".join(json.dumps(item) for item in (first, second)))
+
+    provider, client = provider_for(handler)
+
+    async def scenario() -> ModelResponse:
+        async with client:
+            chunks = [chunk async for chunk in provider.stream(make_request())]
+            return aggregate_stream_chunks(chunks)
+
+    aggregated = asyncio.run(scenario())
+
+    assert [call.id for call in aggregated.tool_calls] == ["call-a", "call-b"]
+    assert [call.name for call in aggregated.tool_calls] == ["echo", "sum"]
+    assert [call.arguments for call in aggregated.tool_calls] == [
+        {"value": "a"},
+        {"value": "b"},
+    ]
 
 
 def test_http_status_errors_are_classified() -> None:

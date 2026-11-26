@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 import httpx
@@ -20,17 +21,33 @@ from kairo_harness.domain import (
     ToolCallDelta,
     ToolCallRequest,
     Usage,
+    usage_delta,
 )
 from kairo_harness.errors import ProviderError
-from kairo_harness.providers.base import ModelProvider
+from kairo_harness.providers.base import (
+    ModelProvider,
+    ProviderAdapterConfig,
+    build_tool_call,
+    require_tool_arguments,
+)
 
 
-class OllamaConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class OllamaConfig(ProviderAdapterConfig):
     base_url: AnyHttpUrl
     timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     headers: dict[str, str] = Field(default_factory=dict)
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> OllamaConfig | None:
+        env = os.environ if environ is None else environ
+        base_url = env.get("KAIRO_OLLAMA_BASE_URL")
+        if not base_url:
+            return None
+        timeout = env.get("KAIRO_OLLAMA_TIMEOUT_SECONDS")
+        return cls(
+            base_url=base_url,
+            timeout_seconds=float(timeout) if timeout else 30.0,
+        )
 
 
 class OllamaFunctionCall(BaseModel):
@@ -91,6 +108,13 @@ class OllamaProvider(ModelProvider):
     def name(self) -> str:
         return "ollama"
 
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return self.config.capabilities
+
+    def capabilities_for(self, model: str) -> ModelCapabilities:
+        return self.config.capabilities_for(model)
+
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
@@ -113,12 +137,17 @@ class OllamaProvider(ModelProvider):
                 details={"operation": "list_models", "issueCount": len(error.errors())},
             ) from error
 
-        capabilities = ModelCapabilities(streaming=True, tool_calls=True)
         return [
-            ModelDescriptor(id=model.name, capabilities=capabilities) for model in parsed.models
+            ModelDescriptor(
+                id=model.name,
+                name=model.name,
+                capabilities=self.capabilities_for(model.name),
+            )
+            for model in parsed.models
         ]
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.require_capabilities(request.model, tool_calls=bool(request.tools))
         payload = self._chat_payload(request, stream=False)
         try:
             response = await self._client.post("/api/chat", json=payload)
@@ -146,14 +175,29 @@ class OllamaProvider(ModelProvider):
         )
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamChunk]:
+        self.require_capabilities(
+            request.model,
+            streaming=True,
+            tool_calls=bool(request.tools),
+        )
         payload = self._chat_payload(request, stream=True)
+        previous_usage = Usage()
         try:
             async with self._client.stream("POST", "/api/chat", json=payload) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line.strip():
                         continue
-                    yield self._stream_chunk(line)
+                    chunk = self._stream_chunk(line)
+                    usage = usage_delta(chunk.usage, previous_usage)
+                    previous_usage = previous_usage.model_copy(
+                        update={
+                            field: value
+                            for field, value in chunk.usage.model_dump().items()
+                            if value is not None
+                        }
+                    )
+                    yield chunk.model_copy(update={"usage": usage})
         except ProviderError:
             raise
         except Exception as error:
@@ -188,10 +232,21 @@ class OllamaProvider(ModelProvider):
         return payload
 
     @staticmethod
-    def _message(message: ModelMessage) -> dict[str, str]:
-        payload = {"role": str(message.role), "content": message.content}
+    def _message(message: ModelMessage) -> dict[str, Any]:
+        payload: dict[str, Any] = {"role": str(message.role), "content": message.content}
         if message.tool_name:
             payload["tool_name"] = message.tool_name
+        if message.tool_calls:
+            payload["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments, sort_keys=True),
+                    },
+                }
+                for call in message.tool_calls
+            ]
         return payload
 
     @staticmethod
@@ -218,37 +273,15 @@ class OllamaProvider(ModelProvider):
     def _tool_calls(calls: list[OllamaToolCall]) -> list[ToolCallRequest]:
         normalized: list[ToolCallRequest] = []
         for call in calls:
-            arguments = call.function.arguments
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except ValueError as error:
-                    raise ProviderError(
-                        "Ollama returned malformed tool arguments",
-                        code="provider.invalid_tool_arguments",
-                        retryable=False,
-                    ) from error
-            if not isinstance(arguments, dict):
-                raise ProviderError(
-                    "Ollama returned tool arguments that were not an object",
-                    code="provider.invalid_tool_arguments",
-                    retryable=False,
+            arguments = require_tool_arguments("Ollama", call.function.arguments, parse_json=True)
+            normalized.append(
+                build_tool_call(
+                    "Ollama",
+                    call_id=call.id or str(uuid.uuid4()),
+                    name=call.function.name,
+                    arguments=arguments,
                 )
-            try:
-                normalized.append(
-                    ToolCallRequest(
-                        id=call.id or str(uuid.uuid4()),
-                        name=call.function.name,
-                        arguments=arguments,
-                    )
-                )
-            except ValidationError as error:
-                raise ProviderError(
-                    "Ollama returned an invalid tool call",
-                    code="provider.invalid_tool_call",
-                    retryable=False,
-                    details={"issueCount": len(error.errors())},
-                ) from error
+            )
         return normalized
 
     @staticmethod
@@ -264,7 +297,7 @@ class OllamaProvider(ModelProvider):
             deltas.append(
                 ToolCallDelta(
                     index=index,
-                    id=call.id or str(uuid.uuid4()),
+                    id=call.id or None,
                     name=call.function.name,
                     arguments_delta=arguments_delta,
                 )

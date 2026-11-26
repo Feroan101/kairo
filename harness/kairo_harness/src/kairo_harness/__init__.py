@@ -1,4 +1,21 @@
+from kairo_harness.checkpoint import (
+    Checkpoint,
+    CheckpointBoundary,
+    CheckpointMetadata,
+    CheckpointRecorder,
+    CheckpointState,
+    CompletedToolCall,
+    PendingOperation,
+    RecoveryAction,
+    RecoveryInfo,
+)
 from kairo_harness.config import ExecutionConfig, ModelConfig
+from kairo_harness.context import (
+    ContextBuilder,
+    DefaultContextBuilder,
+    ExecutionContext,
+    ModelContext,
+)
 from kairo_harness.domain import (
     FinishReason,
     ModelStreamChunk,
@@ -10,26 +27,85 @@ from kairo_harness.domain import (
 )
 from kairo_harness.events import EventSink, InMemoryEventSink
 from kairo_harness.execution import ExecutionRunner
-from kairo_harness.providers import MockProvider, ModelProvider, OllamaConfig, OllamaProvider
+from kairo_harness.memory import (
+    AgentMemory,
+    MemoryRecord,
+    MemoryScope,
+    PrivateAgentMemory,
+    PrivateMemoryQuery,
+    PrivateMemoryUpdate,
+    SharedTeamMemory,
+    TeamMemory,
+    TeamMemoryQuery,
+    TeamMemoryUpdate,
+)
+from kairo_harness.providers import (
+    AnthropicConfig,
+    AnthropicProvider,
+    GeminiConfig,
+    GeminiProvider,
+    MockProvider,
+    ModelProvider,
+    OllamaConfig,
+    OllamaProvider,
+    OpenAIConfig,
+    OpenAIProvider,
+    ProviderRegistry,
+    ProviderSettings,
+)
+from kairo_harness.standalone import StandaloneHarness, StandaloneRunResult
 from kairo_harness.state import ExecutionResult, ExecutionState, ExecutionStatus
 from kairo_harness.tools import RegistryToolExecutor, Tool, ToolRegistry, ToolRegistrySnapshot
 
 __all__ = [
+    "AgentMemory",
+    "AnthropicConfig",
+    "AnthropicProvider",
+    "Checkpoint",
+    "CheckpointBoundary",
+    "CheckpointMetadata",
+    "CheckpointRecorder",
+    "CheckpointState",
+    "CompletedToolCall",
+    "ContextBuilder",
+    "DefaultContextBuilder",
     "EventSink",
     "ExecutionConfig",
+    "ExecutionContext",
     "ExecutionResult",
     "ExecutionRunner",
     "ExecutionState",
     "ExecutionStatus",
     "FinishReason",
+    "GeminiConfig",
+    "GeminiProvider",
     "InMemoryEventSink",
+    "MemoryRecord",
+    "MemoryScope",
     "MockProvider",
     "ModelConfig",
+    "ModelContext",
     "ModelProvider",
     "ModelStreamChunk",
     "OllamaConfig",
     "OllamaProvider",
+    "OpenAIConfig",
+    "OpenAIProvider",
+    "PendingOperation",
+    "PrivateAgentMemory",
+    "PrivateMemoryQuery",
+    "PrivateMemoryUpdate",
+    "ProviderRegistry",
+    "ProviderSettings",
+    "RecoveryAction",
+    "RecoveryInfo",
     "RegistryToolExecutor",
+    "SharedTeamMemory",
+    "StandaloneHarness",
+    "StandaloneRunResult",
+    "TeamMemory",
+    "TeamMemoryQuery",
+    "TeamMemoryUpdate",
     "Tool",
     "ToolCallDelta",
     "ToolRegistry",

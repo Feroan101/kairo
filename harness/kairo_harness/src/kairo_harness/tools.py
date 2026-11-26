@@ -104,6 +104,12 @@ class ToolExecutor(ABC):
     @abstractmethod
     async def execute(self, call: ToolCallRequest, spec: ToolSpec) -> ToolResult: ...
 
+    async def cancel(self, call: ToolCallRequest) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
 
 class ToolCallValidator:
     def __init__(
@@ -179,6 +185,9 @@ class RegistryToolExecutor(ToolExecutor):
     ) -> None:
         self.snapshot = registry.snapshot() if isinstance(registry, ToolRegistry) else registry
         self._validator = ToolCallValidator(self.snapshot, granted_permissions)
+
+    def bind_validator(self, validator: ToolCallValidator) -> None:
+        self._validator = validator
 
     async def execute(self, call: ToolCallRequest, spec: ToolSpec) -> ToolResult:
         try:
