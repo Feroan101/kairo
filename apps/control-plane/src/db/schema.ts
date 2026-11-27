@@ -21,6 +21,7 @@ export const users = pgTable(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     email: text("email").notNull(),
     displayName: text("display_name"),
+    passwordHash: text("password_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -30,6 +31,27 @@ export const users = pgTable(
   (table) => [
     uniqueIndex("users_email_unique").on(table.email),
     check("users_email_not_empty", sql`length(btrim(${table.email})) > 0`),
+  ],
+);
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("sessions_token_hash_unique").on(table.tokenHash),
+    index("sessions_user_idx").on(table.userId),
+    index("sessions_expires_at_idx").on(table.expiresAt),
+    check("sessions_token_hash_format", sql`${table.tokenHash} ~ '^[a-f0-9]{64}$'`),
+    check("sessions_expires_after_created", sql`${table.expiresAt} > ${table.createdAt}`),
   ],
 );
 
@@ -47,6 +69,27 @@ export const organizations = pgTable(
   (table) => [
     index("organizations_name_idx").on(table.name),
     check("organizations_name_not_empty", sql`length(btrim(${table.name})) > 0`),
+  ],
+);
+
+export const auditEvents = pgTable(
+  "audit_events",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    action: text("action").notNull(),
+    actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    organizationId: uuid("organization_id").references(() => organizations.id, {
+      onDelete: "set null",
+    }),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("audit_events_action_idx").on(table.action),
+    index("audit_events_actor_idx").on(table.actorUserId),
+    index("audit_events_organization_idx").on(table.organizationId),
+    check("audit_events_action_not_empty", sql`length(btrim(${table.action})) > 0`),
   ],
 );
 

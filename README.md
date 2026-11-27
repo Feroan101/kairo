@@ -64,6 +64,10 @@ Edit `.env` before starting infrastructure. `.env` is ignored by Git; never comm
 | `DATABASE_URL` | Control plane connection string | matches the defaults above |
 | `TEST_DATABASE_URL` | Integration test connection string | matches the defaults above |
 | `DATABASE_SCHEMA` | Optional runtime search path | unset |
+| `HOST` | Control-plane bind address | `127.0.0.1` |
+| `PORT` | Control-plane HTTP port | `3000` |
+| `SESSION_TTL_SECONDS` | Session lifetime | `604800` |
+| `LOG_LEVEL` | Control-plane log level | `info` |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Gemini credential; `GOOGLE_API_KEY` is the fallback | unset |
 | `ANTHROPIC_API_KEY` | Claude credential | unset |
 | `OPENAI_API_KEY` | OpenAI credential | unset |
@@ -104,6 +108,10 @@ pnpm --filter @kairo/control-plane db:check
 `db:migrate` also verifies that the control plane can connect to the Compose database and produces a redacted connection-failure message when it cannot.
 
 Database integration tests require `TEST_DATABASE_URL` and a role with `CREATEDB`. The tests create and drop disposable databases and do not use the persistent development volume.
+
+## Control-plane API
+
+After migrating, `pnpm --filter @kairo/control-plane start` serves the identity, access, and agent management API. Users register at `POST /v1/auth/register`, authenticate at `POST /v1/auth/login`, and use the returned bearer token for protected routes. Organizations are created at `POST /v1/organizations`; membership roles are owner, admin, and member. Agents are created and configured under `/v1/organizations/:organizationId/agents` with model, harness, tool permission, execution policy, and memory scope settings; credentials are never stored in agent configuration. `GET /openapi.json` exposes the generated API contract, and `GET /health` checks the database connection. See `apps/control-plane/README.md` for the full route list.
 
 ## Resetting local data
 
